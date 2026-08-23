@@ -14,13 +14,16 @@ use futures_util::{
 };
 use remux_protocol::{
     AgentPayload, ClientPayload, Command, CommandResult, MachineInfo, PROTOCOL_VERSION,
-    PairingBundle, SizePolicy, WireMessage, agent_aad, client_aad, decode_secret, open, seal,
-    terminal_bytes_to_text, terminal_text_to_bytes, wire_from_text, wire_to_text,
+    PairingBundle, SizePolicy, WireMessage, agent_aad, client_aad, decode_secret, open,
+    relay_connector, seal, terminal_bytes_to_text, terminal_text_to_bytes, wire_from_text,
+    wire_to_text,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::MissedTickBehavior;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async_tls_with_config, tungstenite::Message,
+};
 use uuid::Uuid;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -360,9 +363,10 @@ impl ClientConnection {
     ) -> Result<Self> {
         validate_relay_url(relay)?;
         let endpoint = websocket_endpoint(relay, "ws/client");
-        let (socket, _) = connect_async(&endpoint)
-            .await
-            .with_context(|| format!("connect to relay {endpoint}"))?;
+        let (socket, _) =
+            connect_async_tls_with_config(&endpoint, None, false, Some(relay_connector()))
+                .await
+                .with_context(|| format!("connect to relay {endpoint}"))?;
         let (mut sink, mut source) = socket.split();
         send_wire(
             &mut sink,
@@ -610,9 +614,10 @@ async fn list_machines(
 ) -> Result<Vec<MachineInfo>> {
     validate_relay_url(relay)?;
     let endpoint = websocket_endpoint(relay, "ws/client");
-    let (socket, _) = connect_async(&endpoint)
-        .await
-        .with_context(|| format!("connect to relay {endpoint}"))?;
+    let (socket, _) =
+        connect_async_tls_with_config(&endpoint, None, false, Some(relay_connector()))
+            .await
+            .with_context(|| format!("connect to relay {endpoint}"))?;
     let (mut sink, mut source) = socket.split();
     send_wire(
         &mut sink,

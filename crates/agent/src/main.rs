@@ -14,12 +14,12 @@ use config::{AgentConfig, default_config_path, default_machine_name, default_pai
 use futures_util::{Sink, SinkExt, StreamExt};
 use remux_protocol::{
     AgentPayload, ClientPayload, Command, CommandResult, MachineInfo, PROTOCOL_VERSION,
-    WireMessage, agent_aad, client_aad, decode_secret, open, seal, terminal_text_to_bytes,
-    wire_from_text, wire_to_text,
+    WireMessage, agent_aad, client_aad, decode_secret, open, relay_connector, seal,
+    terminal_text_to_bytes, wire_from_text, wire_to_text,
 };
 use terminal::{AgentEvent, TerminalManager};
 use tokio::{sync::mpsc, time::MissedTickBehavior};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -168,7 +168,8 @@ async fn run_forever(config: AgentConfig) -> Result<()> {
         .await
         {
             Ok(()) => warn!("relay connection closed"),
-            Err(error) => warn!(%error, "relay connection failed"),
+            // `{:#}` renders the whole anyhow chain; plain Display hides the root cause.
+            Err(error) => warn!(error = format!("{error:#}"), "relay connection failed"),
         }
         // Only the temporary tmux attach clients are stopped. tmux sessions keep running.
         terminals.detach_all();
@@ -186,9 +187,10 @@ async fn run_connection(
     retry_seconds: &mut u64,
 ) -> Result<()> {
     let endpoint = websocket_endpoint(&config.relay_url, "ws/agent");
-    let (socket, _) = connect_async(&endpoint)
-        .await
-        .with_context(|| format!("connect to relay {endpoint}"))?;
+    let (socket, _) =
+        connect_async_tls_with_config(&endpoint, None, false, Some(relay_connector()))
+            .await
+            .with_context(|| format!("connect to relay {endpoint}"))?;
     let (mut sink, mut source) = socket.split();
     let machine = MachineInfo {
         id: config.machine_id,

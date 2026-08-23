@@ -81,7 +81,7 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 - 完整重放窗口、持久化状态与系统化速率限制；
 - 公网威胁模型下的渗透测试和第三方密码学审计。
 
-本地测试可使用 `ws://127.0.0.1`。跨网络部署必须使用可信的 HTTPS/WSS 反向代理。`REMUX_APP_CONFIG`、Relay token、`agent.toml` 和 `pairing.toml` 都是高权限凭证，不要提交到版本库、CI 日志或发送给第三方。
+Relay 默认以自签证书提供 `wss://`，agent 与客户端不校验该证书，因此传输只防被动窃听。若 relay 暴露在不可信网络上，请配置真实证书或在前面挂可信的 HTTPS/WSS 反向代理。`REMUX_APP_CONFIG`、Relay token、`agent.toml` 和 `pairing.toml` 都是高权限凭证，不要提交到版本库、CI 日志或发送给第三方。
 
 ## 快速开始
 
@@ -91,19 +91,27 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 
 ```bash
 remux-relay \
-  --listen 127.0.0.1:8787 \
-  --public-url ws://127.0.0.1:8787 \
+  --listen 0.0.0.0:8787 \
   --agent-token 'replace-with-agent-token' \
   --client-token 'replace-with-client-token'
 ```
 
+Relay 默认就是 `wss://`：不指定证书时它会在启动时生成一张临时自签证书，无需任何 TLS 配置。Agent 与客户端不校验 relay 证书，因此自签、换端口、用裸 IP 连接都能正常工作。
+
 Relay 会输出一行可粘贴到 Android App 的配置：
 
 ```text
-REMUX_APP_CONFIG=ws://127.0.0.1:8787/~<url-safe-client-token>
+REMUX_APP_CONFIG=wss://0.0.0.0:8787/~<url-safe-client-token>
 ```
 
-`~` 后只是 URL-safe 编码，不是加密。Relay 若监听 `0.0.0.0`，请用 `--public-url ws(s)://<手机可达地址>` 指定客户端可访问的地址。
+`~` 后只是 URL-safe 编码，不是加密。监听 `0.0.0.0` 时请把其中的主机换成手机实际可达的地址，例如 `wss://203.0.113.10:8787/~...`。
+
+可选参数：
+
+- `--tls-cert` / `--tls-key`：改用你自己的 PEM 证书，替代自动生成的自签证书。
+- `--no-tls`：退回明文 `ws://`，用于前面已经挂了 Caddy/Nginx 做 TLS 终止的场景。
+
+> 安全边界：tmux 会话内容由 pairing key 端到端加密，relay 看不到明文。但由于不校验证书，这一层 TLS 只防被动窃听——能实施主动中间人的攻击者可以窃取 relay 的 agent/client token。若你的 relay 暴露在不可信网络上，请配 `--tls-cert` 使用真实证书并在前面做反代。
 
 ### 2. 配置受控机器
 
@@ -119,7 +127,7 @@ remux run
 
 ```bash
 REMUX_AGENT_TOKEN='replace-with-agent-token' remux config \
-  --relay ws://127.0.0.1:8787 \
+  --relay wss://127.0.0.1:8787 \
   --name my-linux-host
 ```
 
@@ -135,7 +143,7 @@ REMUX_AGENT_TOKEN='replace-with-agent-token' remux config \
 ```bash
 export REMUX_CLIENT_TOKEN='replace-with-client-token'
 
-remux-client --relay ws://127.0.0.1:8787 machines
+remux-client --relay wss://127.0.0.1:8787 machines
 remux-client sessions --pairing pairing.toml
 remux-client create-session --pairing pairing.toml --name codex --cwd /path/to/repo
 remux-client windows --pairing pairing.toml --session-id '$0'

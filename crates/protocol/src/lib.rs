@@ -1,3 +1,8 @@
+#[cfg(feature = "client-tls")]
+mod tls;
+#[cfg(feature = "client-tls")]
+pub use tls::relay_connector;
+
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chacha20poly1305::{

@@ -16,7 +16,7 @@ clap.workspace = true
 futures-util.workspace = true
 hostname.workspace = true
 portable-pty.workspace = true
-remux-protocol = { path = "../protocol" }
+remux-protocol = { path = "../protocol", features = ["client-tls"] }
 rpassword.workspace = true
 serde.workspace = true
 tokio.workspace = true

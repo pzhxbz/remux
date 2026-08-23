@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -11,6 +11,7 @@ use axum::{
     response::Response,
     routing::get,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
@@ -48,9 +49,17 @@ struct Args {
     #[arg(long, env = "REMUX_CLIENT_TOKEN", hide_env_values = true)]
     client_token: String,
 
-    /// Public ws:// or wss:// base URL printed in the Android quick-connect code.
-    #[arg(long, env = "REMUX_PUBLIC_URL")]
-    public_url: Option<String>,
+    /// PEM certificate chain. A self-signed certificate is generated when omitted.
+    #[arg(long, env = "REMUX_TLS_CERT", requires = "tls_key")]
+    tls_cert: Option<PathBuf>,
+
+    /// PEM private key matching --tls-cert.
+    #[arg(long, env = "REMUX_TLS_KEY", requires = "tls_cert")]
+    tls_key: Option<PathBuf>,
+
+    /// Serve plaintext ws:// instead of TLS, for running behind a reverse proxy.
+    #[arg(long, env = "REMUX_NO_TLS")]
+    no_tls: bool,
 }
 
 #[derive(Clone)]
@@ -83,12 +92,47 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     validate_token("agent", &args.agent_token)?;
     validate_token("client", &args.client_token)?;
-    let public_url = args
-        .public_url
-        .unwrap_or_else(|| format!("ws://{}", args.listen));
+
+    let tls = if args.no_tls {
+        None
+    } else {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+        // clap's `requires` guarantees the cert/key pair arrives together.
+        Some(match (args.tls_cert, args.tls_key) {
+            (Some(cert), Some(key)) => RustlsConfig::from_pem_file(&cert, &key)
+                .await
+                .with_context(|| {
+                    format!(
+                        "load TLS material from {} and {}",
+                        cert.display(),
+                        key.display()
+                    )
+                })?,
+            _ => {
+                // Agents and clients skip certificate validation, so an ephemeral
+                // self-signed certificate is enough to get the connection encrypted.
+                let cert = rcgen::generate_simple_self_signed(vec!["remux-relay".to_owned()])
+                    .context("generate self-signed certificate")?;
+                info!("no --tls-cert given; using an ephemeral self-signed certificate");
+                RustlsConfig::from_pem(
+                    cert.cert.pem().into_bytes(),
+                    cert.signing_key.serialize_pem().into_bytes(),
+                )
+                .await
+                .context("load generated certificate")?
+            }
+        })
+    };
+
+    let scheme = if tls.is_some() { "wss" } else { "ws" };
+    let public_url = format!("{scheme}://{}", args.listen);
     let quick_connect = quick_connect_code(&public_url, &args.client_token)?;
-    if args.listen.ip().is_unspecified() && public_url.contains("0.0.0.0") {
-        warn!("quick-connect address is not remotely reachable; set --public-url");
+    if args.listen.ip().is_unspecified() {
+        warn!(
+            "relay is listening on all interfaces; the quick-connect host must be replaced with an address the phone can reach"
+        );
     }
     println!("REMUX_APP_CONFIG={quick_connect}");
     println!("This line contains the client credential; treat it as a secret.");
@@ -109,8 +153,22 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(args.listen)
         .await
         .with_context(|| format!("bind relay to {}", args.listen))?;
-    info!(listen = %args.listen, "relay listening; terminate TLS in front of this socket in production");
-    axum::serve(listener, app).await.context("serve relay")
+
+    match tls {
+        Some(config) => {
+            info!(listen = %args.listen, "relay listening over TLS");
+            let listener = listener.into_std().context("unwrap relay listener")?;
+            axum_server::from_tcp_rustls(listener, config)
+                .context("adopt relay listener")?
+                .serve(app.into_make_service())
+                .await
+                .context("serve relay")
+        }
+        None => {
+            info!(listen = %args.listen, "relay listening in plaintext; pass --tls-cert/--tls-key or terminate TLS in front of this socket");
+            axum::serve(listener, app).await.context("serve relay")
+        }
+    }
 }
 
 fn quick_connect_code(public_url: &str, client_token: &str) -> Result<String> {
