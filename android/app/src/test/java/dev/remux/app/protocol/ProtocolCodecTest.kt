@@ -51,4 +51,16 @@ class ProtocolCodecTest {
         assertTrue(payload is AgentPayload.TerminalClosed)
         assertEquals(0u, (payload as AgentPayload.TerminalClosed).exitCode)
     }
+
+    @Test
+    fun `terminal refresh matches Rust v1 extension`() {
+        val encoded = ProtocolCodec.encodeClientPayload(
+            ClientPayload.TerminalRefresh("01890f5e-b080-7cc0-98d2-a0f9d1f43c03"),
+        ).decodeToString()
+
+        assertEquals(
+            """{"type":"terminal_refresh","stream_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c03"}""",
+            encoded,
+        )
+    }
 }

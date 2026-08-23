@@ -307,6 +307,9 @@ where
         } => {
             terminals.resize(client_id, stream_id, cols, rows)?;
         }
+        ClientPayload::TerminalRefresh { stream_id } => {
+            terminals.refresh(client_id, stream_id)?;
+        }
         ClientPayload::TerminalDetach { stream_id } => {
             terminals.detach(client_id, stream_id)?;
         }

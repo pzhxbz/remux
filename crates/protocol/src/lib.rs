@@ -180,6 +180,9 @@ pub enum ClientPayload {
         cols: u16,
         rows: u16,
     },
+    TerminalRefresh {
+        stream_id: Uuid,
+    },
     TerminalDetach {
         stream_id: Uuid,
     },
@@ -358,6 +361,17 @@ mod tests {
     fn secret_round_trip() {
         let secret = generate_secret();
         assert_eq!(decode_secret(&encode_secret(&secret)).unwrap(), secret);
+    }
+
+    #[test]
+    fn terminal_refresh_uses_the_v1_extension_wire_format() {
+        let stream_id = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c03").unwrap();
+        let encoded = serde_json::to_string(&ClientPayload::TerminalRefresh { stream_id }).unwrap();
+
+        assert_eq!(
+            encoded,
+            r#"{"type":"terminal_refresh","stream_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c03"}"#
+        );
     }
 
     #[test]

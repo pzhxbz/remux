@@ -195,6 +195,23 @@ impl TerminalManager {
             .context("resize PTY")
     }
 
+    pub fn refresh(&self, client_id: Uuid, stream_id: Uuid) -> Result<()> {
+        let client_tty = {
+            let handles = self.handles.lock().unwrap();
+            let handle = handles
+                .get(&stream_id)
+                .context("terminal stream not found")?;
+            anyhow::ensure!(
+                handle.client_id == client_id,
+                "terminal stream belongs to another client"
+            );
+            handle.client_tty.clone()
+        };
+        self.tmux
+            .refresh_client(&client_tty)
+            .context("refresh tmux client")
+    }
+
     pub fn detach(&self, client_id: Uuid, stream_id: Uuid) -> Result<()> {
         let client_tty = {
             let handles = self.handles.lock().unwrap();

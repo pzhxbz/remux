@@ -19,6 +19,7 @@ data class AppConfig(
     val pairings: List<PairingBundle> = emptyList(),
     val favoriteMachineIds: Set<String> = emptySet(),
     val recentMachineIds: List<String> = emptyList(),
+    val tmuxPrefix: String = "C-b",
 ) {
     companion object {
         fun fresh(): AppConfig = AppConfig(

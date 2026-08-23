@@ -98,11 +98,18 @@ class TerminalHandle internal constructor(
         relayClient.resizeTerminal(machineId, streamId, cols.toUShort(), rows.toUShort())
     }
 
+    suspend fun refresh() {
+        relayClient.refreshTerminal(machineId, streamId)
+    }
+
     suspend fun detach() {
         if (closed.compareAndSet(false, true)) {
-            relayClient.detachTerminal(machineId, streamId)
-            outputChannel.close()
-            mutableStatus.value = TerminalStatus(TerminalPhase.CLOSED, "Detached")
+            try {
+                relayClient.detachTerminal(machineId, streamId)
+            } finally {
+                outputChannel.close()
+                mutableStatus.value = TerminalStatus(TerminalPhase.CLOSED, "Detached")
+            }
         }
     }
 
@@ -251,6 +258,10 @@ class RelayClient(
         rows: UShort,
     ) {
         sendPayload(requirePairing(machineId), ClientPayload.TerminalResize(streamId, cols, rows))
+    }
+
+    internal suspend fun refreshTerminal(machineId: String, streamId: String) {
+        sendPayload(requirePairing(machineId), ClientPayload.TerminalRefresh(streamId))
     }
 
     internal suspend fun detachTerminal(machineId: String, streamId: String) {

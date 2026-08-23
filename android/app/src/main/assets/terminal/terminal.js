@@ -1,7 +1,6 @@
 import { Terminal } from './xterm.mjs';
 import { FitAddon } from './addon-fit.mjs';
 
-const APP_ORIGIN = 'https://appassets.androidplatform.net';
 const encoder = new TextEncoder();
 const terminalElement = document.getElementById('terminal');
 const fitAddon = new FitAddon();
@@ -45,13 +44,22 @@ const terminal = new Terminal({
 });
 
 terminal.loadAddon(fitAddon);
+// tmux uses the outer terminal's alternate buffer only to restore a local shell
+// after detach. RemoteMux has no local shell behind this view, so retaining the
+// normal buffer gives touch users independent scrollback without changing tmux.
+terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => (
+  params.length === 1 && params[0] === 1049
+));
+terminal.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => (
+  params.length === 1 && params[0] === 1049
+));
 terminal.open(terminalElement);
 
 let nativePort = null;
 let pointerMode = 'history';
 let resizeTimer = null;
-let historyBaseAtLeave = 0;
 let wasAtBottom = true;
+let unreadSinceLeave = 0;
 let lastModes = '';
 let fontSize = 14;
 const pointers = new Map();
@@ -92,17 +100,17 @@ function reportViewport() {
   const buffer = terminal.buffer.active;
   const atBottom = buffer.viewportY >= buffer.baseY;
   if (wasAtBottom && !atBottom) {
-    historyBaseAtLeave = buffer.baseY;
+    unreadSinceLeave = 0;
   }
   if (atBottom) {
-    historyBaseAtLeave = buffer.baseY;
+    unreadSinceLeave = 0;
   }
   wasAtBottom = atBottom;
   post({
     type: 'viewport',
     atBottom,
     distance: Math.max(0, buffer.baseY - buffer.viewportY),
-    unread: atBottom ? 0 : Math.max(0, buffer.baseY - historyBaseAtLeave),
+    unread: atBottom ? 0 : unreadSinceLeave,
   });
 }
 
@@ -206,7 +214,7 @@ terminalElement.addEventListener('pointerup', finishPointer);
 terminalElement.addEventListener('pointercancel', finishPointer);
 
 window.addEventListener('message', (event) => {
-  if (event.origin !== APP_ORIGIN || !event.ports || event.ports.length !== 1 || nativePort) {
+  if (event.data !== 'remux-init' || !event.ports || event.ports.length !== 1 || nativePort) {
     return;
   }
   nativePort = event.ports[0];
@@ -221,6 +229,10 @@ window.addEventListener('message', (event) => {
     switch (message.type) {
       case 'output': {
         const bytes = decodeBase64Url(message.data);
+        if (!wasAtBottom) {
+          const lineFeeds = bytes.reduce((count, byte) => count + (byte === 0x0a ? 1 : 0), 0);
+          unreadSinceLeave = Math.min(9999, unreadSinceLeave + Math.max(1, lineFeeds));
+        }
         terminal.write(bytes, () => {
           post({ type: 'output_ack', id: message.id });
           reportModes();

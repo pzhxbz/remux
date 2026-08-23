@@ -145,6 +145,21 @@ impl Tmux {
         bail!("tmux failed: {}", error.trim())
     }
 
+    pub fn refresh_client(&self, client_name: &Path) -> Result<()> {
+        let output = ProcessCommand::new(&self.binary)
+            .args(["refresh-client", "-t"])
+            .arg(client_name)
+            .output()
+            .with_context(|| format!("execute {}", self.binary))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        bail!(
+            "tmux failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    }
+
     fn run<I, S>(&self, args: I) -> Result<Output>
     where
         I: IntoIterator<Item = S>,
