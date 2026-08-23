@@ -6,7 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonClassDiscriminator
 
-const val PROTOCOL_VERSION: Int = 1
+const val PROTOCOL_VERSION: Int = 2
 const val MAX_WIRE_MESSAGE_BYTES: Int = 96 * 1024
 const val MAX_TERMINAL_CHUNK_BYTES: Int = 32 * 1024
 
@@ -17,12 +17,6 @@ data class MachineInfo(
     val os: String,
     val arch: String,
     @SerialName("agent_version") val agentVersion: String,
-)
-
-@Serializable
-data class SealedPayload(
-    val nonce: String,
-    val ciphertext: String,
 )
 
 @Serializable
@@ -57,14 +51,14 @@ sealed interface WireMessage {
     @SerialName("route_to_agent")
     data class RouteToAgent(
         @SerialName("machine_id") val machineId: String,
-        val sealed: SealedPayload,
+        val payload: ClientPayload,
     ) : WireMessage
 
     @Serializable
     @SerialName("deliver_to_client")
     data class DeliverToClient(
         @SerialName("machine_id") val machineId: String,
-        val sealed: SealedPayload,
+        val payload: AgentPayload,
     ) : WireMessage
 
     @Serializable
@@ -297,12 +291,3 @@ sealed interface AgentPayload {
         @SerialName("exit_code") val exitCode: UInt?,
     ) : AgentPayload
 }
-
-@Serializable
-data class PairingBundle(
-    val version: Int,
-    @SerialName("relay_url") val relayUrl: String,
-    @SerialName("machine_id") val machineId: String,
-    @SerialName("machine_name") val machineName: String,
-    @SerialName("machine_secret") val machineSecret: String,
-)

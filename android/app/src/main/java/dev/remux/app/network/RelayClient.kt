@@ -2,6 +2,7 @@ package dev.remux.app.network
 
 import android.annotation.SuppressLint
 
+import dev.remux.app.BuildConfig
 import dev.remux.app.data.RelayProfile
 import dev.remux.app.protocol.AgentPayload
 import dev.remux.app.protocol.ClientPayload
@@ -10,7 +11,6 @@ import dev.remux.app.protocol.CommandResult
 import dev.remux.app.protocol.MAX_TERMINAL_CHUNK_BYTES
 import dev.remux.app.protocol.MachineInfo
 import dev.remux.app.protocol.PROTOCOL_VERSION
-import dev.remux.app.protocol.PairingBundle
 import dev.remux.app.protocol.ProtocolCodec
 import dev.remux.app.protocol.RemuxCrypto
 import dev.remux.app.protocol.SizePolicy
@@ -155,12 +155,11 @@ class RelayClient(
     private val profile: RelayProfile,
     private val clientId: String,
     private val clientName: String,
-    initialPairings: List<PairingBundle>,
     internal val scope: CoroutineScope,
     private val httpClient: OkHttpClient = defaultHttpClient(),
 ) : Closeable {
     private data class PendingRequest(
-        val pairing: PairingBundle,
+        val machineId: String,
         val command: Command,
         val result: CompletableDeferred<CommandResult>,
     )
@@ -170,7 +169,6 @@ class RelayClient(
     private val mutableMachines = MutableStateFlow<Map<String, MachineInfo>>(emptyMap())
     private val pendingRequests = ConcurrentHashMap<String, PendingRequest>()
     private val terminals = ConcurrentHashMap<String, TerminalHandle>()
-    private val pairingByMachine = ConcurrentHashMap<String, PairingBundle>()
     private var socket: WebSocket? = null
     private var heartbeat: Job? = null
     private var reconnect: Job? = null
@@ -181,15 +179,9 @@ class RelayClient(
     val machines: StateFlow<Map<String, MachineInfo>> = mutableMachines.asStateFlow()
 
     init {
-        updatePairings(initialPairings)
         require(UUID.fromString(clientId).toString() == clientId) { "clientId must be a normalized UUID" }
         require(profile.clientToken.length >= 16) { "relay client token must be at least 16 characters" }
         validateRelayUrl(profile.relayUrl)
-    }
-
-    fun updatePairings(pairings: List<PairingBundle>) {
-        pairingByMachine.clear()
-        pairings.forEach { pairingByMachine[it.machineId] = it }
     }
 
     fun start() {
@@ -214,18 +206,15 @@ class RelayClient(
         }
     }
 
-    suspend fun request(pairing: PairingBundle, command: Command): CommandResult {
-        require(pairing.relayUrl.trimEnd('/') == profile.relayUrl.trimEnd('/')) {
-            "pairing belongs to a different relay profile"
-        }
+    suspend fun request(machineId: String, command: Command): CommandResult {
         awaitConnected()
         val requestId = UUID.randomUUID().toString()
         val deferred = CompletableDeferred<CommandResult>()
-        val pending = PendingRequest(pairing, command, deferred)
+        val pending = PendingRequest(machineId, command, deferred)
         pendingRequests[requestId] = pending
         try {
             sendPayload(
-                pairing,
+                machineId,
                 ClientPayload.Request(requestId = requestId, command = command),
             )
             return withTimeout(15_000) { deferred.await() }
@@ -235,7 +224,7 @@ class RelayClient(
     }
 
     suspend fun openTerminal(
-        pairing: PairingBundle,
+        machineId: String,
         sessionId: String,
         cols: Int,
         rows: Int,
@@ -244,7 +233,7 @@ class RelayClient(
         require(cols in 1..UShort.MAX_VALUE.toInt())
         require(rows in 1..UShort.MAX_VALUE.toInt())
         val result = request(
-            pairing,
+            machineId,
             Command.OpenTerminal(sessionId, cols.toUShort(), rows.toUShort(), sizePolicy),
         )
         require(result is CommandResult.TerminalOpened) { "unexpected open terminal response" }
@@ -254,9 +243,8 @@ class RelayClient(
 
     internal suspend fun sendTerminalInput(machineId: String, streamId: String, bytes: ByteArray) {
         require(bytes.size <= MAX_TERMINAL_CHUNK_BYTES) { "terminal input chunk exceeds protocol limit" }
-        val pairing = requirePairing(machineId)
         sendPayload(
-            pairing,
+            machineId,
             ClientPayload.TerminalInput(streamId, RemuxCrypto.encodeBase64Url(bytes)),
         )
     }
@@ -267,11 +255,11 @@ class RelayClient(
         cols: UShort,
         rows: UShort,
     ) {
-        sendPayload(requirePairing(machineId), ClientPayload.TerminalResize(streamId, cols, rows))
+        sendPayload(machineId, ClientPayload.TerminalResize(streamId, cols, rows))
     }
 
     internal suspend fun refreshTerminal(machineId: String, streamId: String) {
-        sendPayload(requirePairing(machineId), ClientPayload.TerminalRefresh(streamId))
+        sendPayload(machineId, ClientPayload.TerminalRefresh(streamId))
     }
 
     internal suspend fun selectTerminalWindow(
@@ -280,7 +268,7 @@ class RelayClient(
         windowId: String,
     ) {
         sendPayload(
-            requirePairing(machineId),
+            machineId,
             ClientPayload.TerminalSelectWindow(streamId, windowId),
         )
     }
@@ -289,7 +277,7 @@ class RelayClient(
         terminals.remove(streamId)
         if (status.value.phase == ConnectionPhase.CONNECTED) {
             runCatching {
-                sendPayload(requirePairing(machineId), ClientPayload.TerminalDetach(streamId))
+                sendPayload(machineId, ClientPayload.TerminalDetach(streamId))
             }
         }
     }
@@ -383,20 +371,13 @@ class RelayClient(
     }
 
     private fun handleAgentPayload(message: WireMessage.DeliverToClient) {
-        val pairing = pairingByMachine[message.machineId]
-            ?: throw RelayException("received encrypted payload for an unpaired machine")
-        val plaintext = RemuxCrypto.open(
-            secret = RemuxCrypto.decodeSecret(pairing.machineSecret),
-            aad = RemuxCrypto.agentAad(message.machineId, clientId),
-            sealed = message.sealed,
-        )
-        when (val payload = ProtocolCodec.decodeAgentPayload(plaintext)) {
+        when (val payload = message.payload) {
             is AgentPayload.Response -> {
                 val pending = pendingRequests[payload.requestId] ?: return
                 if (payload.result is CommandResult.TerminalOpened && pending.command is Command.OpenTerminal) {
                     val opened = payload.result
                     terminals[opened.streamId] = TerminalHandle(
-                        machineId = pending.pairing.machineId,
+                        machineId = pending.machineId,
                         sessionId = pending.command.sessionId,
                         streamId = opened.streamId,
                         ignoreSize = opened.ignoreSize,
@@ -430,18 +411,13 @@ class RelayClient(
         }
     }
 
-    private suspend fun sendPayload(pairing: PairingBundle, payload: ClientPayload) {
+    private suspend fun sendPayload(machineId: String, payload: ClientPayload) {
         check(status.value.phase == ConnectionPhase.CONNECTED) { "relay is not connected" }
-        val sealed = RemuxCrypto.seal(
-            secret = RemuxCrypto.decodeSecret(pairing.machineSecret),
-            aad = RemuxCrypto.clientAad(pairing.machineId, clientId),
-            plaintext = ProtocolCodec.encodeClientPayload(payload),
-        )
         val current = synchronized(lock) { socket }
             ?: throw RelayException("relay socket is unavailable")
         check(
             current.send(
-                ProtocolCodec.encodeWire(WireMessage.RouteToAgent(pairing.machineId, sealed)),
+                ProtocolCodec.encodeWire(WireMessage.RouteToAgent(machineId, payload)),
             ),
         ) { "relay rejected outgoing message" }
     }
@@ -495,9 +471,6 @@ class RelayClient(
         }
     }
 
-    private fun requirePairing(machineId: String): PairingBundle = pairingByMachine[machineId]
-        ?: throw IllegalArgumentException("machine $machineId is not paired")
-
     override fun close() {
         val current = synchronized(lock) {
             desired = false
@@ -519,9 +492,12 @@ class RelayClient(
         fun defaultHttpClient(): OkHttpClient {
             // The relay serves an ephemeral self-signed certificate by default
             // (mirroring the Rust agent/client, which also skip certificate
-            // validation). Session traffic is already sealed end-to-end with
-            // the pairing key, so TLS here only needs to encrypt, not
-            // authenticate, the relay.
+            // validation). Protocol v2 removed end-to-end payload encryption:
+            // TLS here encrypts the transport but does NOT authenticate the
+            // relay, so the relay operator — or an active MITM anywhere on the
+            // TLS path — can read and modify terminal content. On untrusted
+            // networks, front the relay with a real certificate instead of
+            // relying on this trust-all client.
             val trustAll = object : X509TrustManager {
                 @SuppressLint("TrustAllX509TrustManager")
                 override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
@@ -545,6 +521,9 @@ class RelayClient(
         private fun validateRelayUrl(url: String) {
             require(url.startsWith("ws://") || url.startsWith("wss://")) {
                 "relay URL must start with ws:// or wss://"
+            }
+            require(BuildConfig.DEBUG || url.startsWith("wss://")) {
+                "Release builds require a wss:// relay URL"
             }
         }
     }

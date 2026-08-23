@@ -5,10 +5,7 @@ import dev.remux.app.protocol.AgentPayload
 import dev.remux.app.protocol.ClientPayload
 import dev.remux.app.protocol.Command
 import dev.remux.app.protocol.CommandResult
-import dev.remux.app.protocol.PairingBundle
 import dev.remux.app.protocol.ProtocolCodec
-import dev.remux.app.protocol.RemuxCrypto
-import dev.remux.app.protocol.SealedPayload
 import dev.remux.app.protocol.SessionInfo
 import dev.remux.app.protocol.WireMessage
 import java.util.UUID
@@ -33,20 +30,11 @@ class RelayClientTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val machineId = "01890f5e-b080-7cc0-98d2-a0f9d1f43c01"
     private val clientId = "01890f5e-b080-7cc0-98d2-a0f9d1f43c02"
-    private val secret = ByteArray(32) { it.toByte() }
     private lateinit var relayUrl: String
-    private lateinit var pairing: PairingBundle
 
     @Before
     fun setUp() {
         relayUrl = server.url("/").toString().replaceFirst("http", "ws").trimEnd('/')
-        pairing = PairingBundle(
-            version = 1,
-            relayUrl = relayUrl,
-            machineId = machineId,
-            machineName = "linux",
-            machineSecret = RemuxCrypto.encodeBase64Url(secret),
-        )
     }
 
     @After
@@ -56,18 +44,17 @@ class RelayClientTest {
     }
 
     @Test
-    fun `handshake and encrypted request match relay protocol`() = runBlocking {
+    fun `handshake and plaintext request match relay protocol`() = runBlocking {
         server.enqueue(MockResponse().withWebSocketUpgrade(FakeRelay()))
         val client = RelayClient(
             profile = RelayProfile("test", relayUrl, "0123456789abcdef"),
             clientId = clientId,
             clientName = "android-test",
-            initialPairings = listOf(pairing),
             scope = scope,
         )
 
         client.awaitConnected()
-        val result = client.request(pairing, Command.ListSessions)
+        val result = client.request(machineId, Command.ListSessions)
 
         assertTrue(result is CommandResult.Sessions)
         assertEquals("codex", (result as CommandResult.Sessions).sessions.single().name)
@@ -84,7 +71,7 @@ class RelayClientTest {
                     )
                     webSocket.send(ProtocolCodec.encodeWire(WireMessage.MachineSnapshot(emptyList())))
                 }
-                is WireMessage.RouteToAgent -> handleRequest(webSocket, wire.sealed)
+                is WireMessage.RouteToAgent -> handleRequest(webSocket, wire.machineId, wire.payload)
                 is WireMessage.Ping -> webSocket.send(
                     ProtocolCodec.encodeWire(WireMessage.Pong(wire.nonce)),
                 )
@@ -100,10 +87,9 @@ class RelayClientTest {
             webSocket.close(code, reason)
         }
 
-        private fun handleRequest(webSocket: WebSocket, sealed: SealedPayload) {
-            val request = ProtocolCodec.decodeClientPayload(
-                RemuxCrypto.open(secret, RemuxCrypto.clientAad(machineId, clientId), sealed),
-            ) as ClientPayload.Request
+        private fun handleRequest(webSocket: WebSocket, targetMachineId: String, payload: ClientPayload) {
+            assertEquals(machineId, targetMachineId)
+            val request = payload as ClientPayload.Request
             assertTrue(request.command is Command.ListSessions)
             val response = AgentPayload.Response(
                 requestId = request.requestId,
@@ -124,11 +110,7 @@ class RelayClientTest {
                 ProtocolCodec.encodeWire(
                     WireMessage.DeliverToClient(
                         machineId = machineId,
-                        sealed = RemuxCrypto.seal(
-                            secret,
-                            RemuxCrypto.agentAad(machineId, clientId),
-                            ProtocolCodec.encodeAgentPayload(response),
-                        ),
+                        payload = response,
                     ),
                 ),
             )

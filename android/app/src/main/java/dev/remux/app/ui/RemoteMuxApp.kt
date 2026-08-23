@@ -3,8 +3,6 @@
 package dev.remux.app.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,7 +19,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,23 +26,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun RemoteMuxApp(viewModel: MainViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val snackbarHost = remember { SnackbarHostState() }
     val keyboard = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
-    val pairingLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
-                    reader.readText()
-                } ?: error("Cannot open pairing file")
-            }.onSuccess(viewModel::importPairing)
-                .onFailure { viewModel.reportError(it.message ?: "Cannot import pairing") }
-        }
-    }
 
     LaunchedEffect(state.message) {
         val message = state.message ?: return@LaunchedEffect
@@ -90,9 +74,6 @@ fun RemoteMuxApp(viewModel: MainViewModel) {
                 onOnlineOnly = viewModel::setOnlineOnly,
                 onMachine = viewModel::openMachine,
                 onFavorite = viewModel::toggleFavorite,
-                onImportPairing = {
-                    pairingLauncher.launch(arrayOf("text/*", "application/octet-stream"))
-                },
                 onSettings = viewModel::showSettings,
                 onTerminals = viewModel::showTerminals,
             )
@@ -113,10 +94,6 @@ fun RemoteMuxApp(viewModel: MainViewModel) {
                 onQuickConnect = viewModel::configureQuickConnect,
                 onSave = viewModel::configureRelay,
                 onTmuxPrefix = viewModel::updateTmuxPrefix,
-                onRemovePairing = viewModel::removePairing,
-                onImportPairing = {
-                    pairingLauncher.launch(arrayOf("text/*", "application/octet-stream"))
-                },
             )
         }
     }

@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -31,7 +30,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,13 +53,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.remux.app.network.ConnectionPhase
 import dev.remux.app.protocol.MachineInfo
-import dev.remux.app.protocol.PairingBundle
 
 private data class MachineRow(
     val id: String,
     val name: String,
-    val online: MachineInfo?,
-    val pairing: PairingBundle?,
+    val online: MachineInfo,
     val favorite: Boolean,
     val recentIndex: Int,
 )
@@ -75,7 +71,7 @@ fun RelaySetupScreen(
 ) {
     RelayForm(
         title = "Connect your machines",
-        subtitle = "The app connects outbound to your Relay. Machine secrets remain encrypted on this device.",
+        subtitle = "The app connects outbound to your Relay. Anyone holding the Relay client token can manage every online machine.",
         initialName = state.config.relay?.name.orEmpty(),
         initialUrl = state.config.relay?.relayUrl.orEmpty(),
         initialToken = state.config.relay?.clientToken.orEmpty(),
@@ -201,7 +197,6 @@ fun MachineListScreen(
     onOnlineOnly: (Boolean) -> Unit,
     onMachine: (String) -> Unit,
     onFavorite: (String) -> Unit,
-    onImportPairing: () -> Unit,
     onSettings: () -> Unit,
     onTerminals: () -> Unit,
 ) {
@@ -226,13 +221,6 @@ fun MachineListScreen(
                         Icon(Icons.Default.Settings, "Settings")
                     }
                 },
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = onImportPairing,
-                icon = { Icon(Icons.Default.Add, null) },
-                text = { Text("Import pairing") },
             )
         },
     ) { innerPadding ->
@@ -260,7 +248,7 @@ fun MachineListScreen(
                 )
             }
             if (rows.isEmpty()) {
-                EmptyMachines(onImportPairing)
+                EmptyMachines()
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -306,7 +294,7 @@ private fun MachineCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clickable(enabled = row.pairing != null) { onMachine(row.id) },
+            .clickable { onMachine(row.id) },
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -325,41 +313,35 @@ private fun MachineCard(
                 }
                 Surface(
                     shape = CircleShape,
-                    color = if (row.online != null) Color(0xFF45C98A) else Color(0xFF78868F),
+                    color = Color(0xFF45C98A),
                     modifier = Modifier.size(13.dp),
                 ) {}
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(row.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
                 Text(
-                    when {
-                        row.pairing == null -> "Online · pairing required"
-                        row.online != null -> "${row.online.os}/${row.online.arch} · agent ${row.online.agentVersion}"
-                        else -> "Offline · paired"
-                    },
+                    "${row.online.os}/${row.online.arch} · agent ${row.online.agentVersion}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (row.pairing != null) {
-                IconButton(onClick = { onFavorite(row.id) }) {
-                    Icon(
-                        if (row.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        if (row.favorite) "Remove favorite" else "Add favorite",
-                        tint = if (row.favorite) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
+            IconButton(onClick = { onFavorite(row.id) }) {
+                Icon(
+                    if (row.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    if (row.favorite) "Remove favorite" else "Add favorite",
+                    tint = if (row.favorite) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun EmptyMachines(onImportPairing: () -> Unit) {
+private fun EmptyMachines() {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -367,39 +349,31 @@ private fun EmptyMachines(onImportPairing: () -> Unit) {
     ) {
         Icon(Icons.Default.Computer, null, modifier = Modifier.size(56.dp))
         Spacer(Modifier.height(16.dp))
-        Text("No machines yet", style = MaterialTheme.typography.titleLarge)
+        Text("No machines online", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Import the pairing.toml generated by remux config. Offline paired machines remain visible here.",
+            "Start the Agent on a machine with remux run and it will appear here as soon as it connects to the Relay.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(vertical = 12.dp),
         )
-        Button(onClick = onImportPairing) { Text("Import pairing.toml") }
     }
 }
 
 private fun machineRows(state: AppUiState): List<MachineRow> {
-    val pairings = state.config.pairings.associateBy(PairingBundle::machineId)
-    val ids = pairings.keys + state.onlineMachines.keys
     val query = state.search.trim().lowercase()
-    return ids.map { id ->
-        val online = state.onlineMachines[id]
-        val pairing = pairings[id]
+    return state.onlineMachines.values.map { machine ->
         MachineRow(
-            id = id,
-            name = online?.name ?: pairing?.machineName ?: id,
-            online = online,
-            pairing = pairing,
-            favorite = id in state.config.favoriteMachineIds,
-            recentIndex = state.config.recentMachineIds.indexOf(id).let {
+            id = machine.id,
+            name = machine.name,
+            online = machine,
+            favorite = machine.id in state.config.favoriteMachineIds,
+            recentIndex = state.config.recentMachineIds.indexOf(machine.id).let {
                 if (it < 0) Int.MAX_VALUE else it
             },
         )
     }.filter { row ->
-        (!state.onlineOnly || row.online != null) &&
-            (query.isEmpty() || row.name.lowercase().contains(query) || row.id.contains(query))
+        query.isEmpty() || row.name.lowercase().contains(query) || row.id.contains(query)
     }.sortedWith(
         compareByDescending<MachineRow> { it.favorite }
-            .thenByDescending { it.online != null }
             .thenBy(MachineRow::recentIndex)
             .thenBy { it.name.lowercase() },
     )

@@ -7,7 +7,7 @@
         android:label="RemoteMux"
         android:supportsRtl="true"
         android:theme="@style/Theme.RemoteMux"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="${cleartextTraffic}">
         <activity
             android:name=".MainActivity"
             android:exported="true"

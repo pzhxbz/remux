@@ -3,7 +3,6 @@ package dev.remux.app.data
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import dev.remux.app.protocol.ProtocolCodec
 import java.security.KeyStore
 import java.util.Base64
 import javax.crypto.Cipher
@@ -13,20 +12,31 @@ import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class SecureConfigStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val encoder = Base64.getEncoder()
     private val decoder = Base64.getDecoder()
 
+    // Lenient codec for the locally persisted config only: older installs may
+    // still carry fields removed in protocol v2 (e.g. "pairings"), which must
+    // not kick the user back to the setup screen. ProtocolCodec.json stays
+    // strict to protect the wire protocol.
+    private val configJson = Json {
+        encodeDefaults = true
+        explicitNulls = true
+        ignoreUnknownKeys = true
+    }
+
     suspend fun load(): AppConfig = withContext(Dispatchers.IO) {
         val encoded = preferences.getString(STATE_KEY, null) ?: return@withContext AppConfig.fresh()
         val plaintext = decrypt(decoder.decode(encoded))
-        ProtocolCodec.json.decodeFromString(AppConfig.serializer(), plaintext.decodeToString())
+        configJson.decodeFromString(AppConfig.serializer(), plaintext.decodeToString())
     }
 
     suspend fun save(config: AppConfig) = withContext(Dispatchers.IO) {
-        val plaintext = ProtocolCodec.json.encodeToString(AppConfig.serializer(), config).encodeToByteArray()
+        val plaintext = configJson.encodeToString(AppConfig.serializer(), config).encodeToByteArray()
         val encoded = encoder.encodeToString(encrypt(plaintext))
         check(preferences.edit().putString(STATE_KEY, encoded).commit()) {
             "failed to persist encrypted app configuration"

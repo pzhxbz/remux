@@ -16,8 +16,6 @@ import dev.remux.app.network.TerminalStatus
 import dev.remux.app.protocol.Command
 import dev.remux.app.protocol.CommandResult
 import dev.remux.app.protocol.MachineInfo
-import dev.remux.app.protocol.PairingBundle
-import dev.remux.app.protocol.PairingToml
 import dev.remux.app.protocol.PaneInfo
 import dev.remux.app.protocol.RelayQuickConnectParser
 import dev.remux.app.protocol.SessionInfo
@@ -124,10 +122,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val normalizedUrl = validateRelayProfile(relayUrl, token)
             require(clientName.trim().isNotEmpty()) { "Client name cannot be empty" }
             val current = mutableState.value.config
-            val incompatible = current.pairings.any { it.relayUrl.trimEnd('/') != normalizedUrl }
-            require(!incompatible) {
-                "Imported pairings belong to another relay; remove or replace them before changing relay"
-            }
             val updated = current.copy(
                 clientName = clientName.trim(),
                 relay = RelayProfile(
@@ -156,50 +150,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 clientName = mutableState.value.config.clientName,
             )
         }.onFailure(::showError)
-    }
-
-    fun importPairing(text: String) {
-        launchOperation {
-            val pairing = PairingToml.parse(text)
-            val current = mutableState.value.config
-            val relay = current.relay ?: error("Configure a Relay profile before importing a pairing")
-            require(pairing.relayUrl.trimEnd('/') == relay.relayUrl.trimEnd('/')) {
-                "This pairing belongs to ${pairing.relayUrl}, not the active Relay"
-            }
-            val existing = current.pairings.firstOrNull { it.machineId == pairing.machineId }
-            if (existing != null && existing != pairing) {
-                detachMachineTerminals(pairing.machineId)
-            }
-            val updatedPairings = current.pairings
-                .filterNot { it.machineId == pairing.machineId } + pairing
-            val updated = current.copy(pairings = updatedPairings)
-            store.save(updated)
-            relayClient?.updatePairings(updatedPairings)
-            mutableState.update {
-                it.copy(config = updated, message = "Paired ${pairing.machineName}")
-            }
-        }
-    }
-
-    fun removePairing(machineId: String) {
-        launchOperation {
-            detachMachineTerminals(machineId)
-            val current = mutableState.value.config
-            val updated = current.copy(
-                pairings = current.pairings.filterNot { it.machineId == machineId },
-                favoriteMachineIds = current.favoriteMachineIds - machineId,
-                recentMachineIds = current.recentMachineIds - machineId,
-            )
-            store.save(updated)
-            relayClient?.updatePairings(updated.pairings)
-            mutableState.update {
-                it.copy(
-                    config = updated,
-                    selectedMachineId = if (it.selectedMachineId == machineId) null else it.selectedMachineId,
-                    screen = if (it.selectedMachineId == machineId) AppScreen.MACHINES else it.screen,
-                )
-            }
-        }
     }
 
     fun toggleFavorite(machineId: String) {
@@ -262,8 +212,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshSessions() {
         launchOperation {
-            val pairing = selectedPairing()
-            val result = requireRelay().request(pairing, Command.ListSessions)
+            val result = requireRelay().request(selectedMachineId(), Command.ListSessions)
             require(result is CommandResult.Sessions) { "Agent returned an invalid sessions response" }
             mutableState.update { it.copy(sessions = result.sessions) }
         }
@@ -273,7 +222,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         launchOperation {
             require(name.trim().isNotEmpty()) { "Session name cannot be empty" }
             val result = requireRelay().request(
-                selectedPairing(),
+                selectedMachineId(),
                 Command.CreateSession(name.trim(), cwd.cleanOptional()),
             )
             require(result is CommandResult.SessionCreated) { "Agent returned an invalid create response" }
@@ -285,14 +234,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun renameSession(sessionId: String, name: String) {
         launchOperation {
             require(name.trim().isNotEmpty()) { "Session name cannot be empty" }
-            requireRelay().request(selectedPairing(), Command.RenameSession(sessionId, name.trim()))
+            requireRelay().request(selectedMachineId(), Command.RenameSession(sessionId, name.trim()))
             refreshSessionsDirect()
         }
     }
 
     fun killSession(sessionId: String) {
         launchOperation {
-            requireRelay().request(selectedPairing(), Command.KillSession(sessionId))
+            requireRelay().request(selectedMachineId(), Command.KillSession(sessionId))
             refreshSessionsDirect()
             mutableState.update { it.copy(message = "Session terminated") }
         }
@@ -309,7 +258,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadWindows(sessionId: String) {
         launchOperation {
-            val result = requireRelay().request(selectedPairing(), Command.ListWindows(sessionId))
+            val result = requireRelay().request(selectedMachineId(), Command.ListWindows(sessionId))
             require(result is CommandResult.Windows) { "Agent returned an invalid windows response" }
             mutableState.update {
                 it.copy(windowsBySession = it.windowsBySession + (sessionId to result.windows))
@@ -320,7 +269,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun createWindow(sessionId: String, name: String?, cwd: String?) {
         launchOperation {
             requireRelay().request(
-                selectedPairing(),
+                selectedMachineId(),
                 Command.CreateWindow(sessionId, name.cleanOptional(), cwd.cleanOptional()),
             )
             loadWindowsDirect(sessionId)
@@ -330,14 +279,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun renameWindow(sessionId: String, windowId: String, name: String) {
         launchOperation {
             require(name.trim().isNotEmpty()) { "Window name cannot be empty" }
-            requireRelay().request(selectedPairing(), Command.RenameWindow(windowId, name.trim()))
+            requireRelay().request(selectedMachineId(), Command.RenameWindow(windowId, name.trim()))
             loadWindowsDirect(sessionId)
         }
     }
 
     fun killWindow(sessionId: String, windowId: String) {
         launchOperation {
-            requireRelay().request(selectedPairing(), Command.KillWindow(windowId))
+            requireRelay().request(selectedMachineId(), Command.KillWindow(windowId))
             loadWindowsDirect(sessionId)
             mutableState.update { it.copy(message = "Window terminated") }
         }
@@ -354,7 +303,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadPanes(windowId: String) {
         launchOperation {
-            val result = requireRelay().request(selectedPairing(), Command.ListPanes(windowId))
+            val result = requireRelay().request(selectedMachineId(), Command.ListPanes(windowId))
             require(result is CommandResult.Panes) { "Agent returned an invalid panes response" }
             mutableState.update { it.copy(panesByWindow = it.panesByWindow + (windowId to result.panes)) }
         }
@@ -379,9 +328,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         launchOperation {
-            val pairing = selectedPairing()
+            val machine = mutableState.value.onlineMachines[machineId]
+                ?: error("Machine is offline")
             val handle = requireRelay().openTerminal(
-                pairing = pairing,
+                machineId = machineId,
                 sessionId = session.id,
                 cols = 80,
                 rows = 24,
@@ -389,8 +339,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             val tab = TerminalTabState(
                 id = UUID.randomUUID().toString(),
-                machineId = pairing.machineId,
-                machineName = pairing.machineName,
+                machineId = machineId,
+                machineName = machine.name,
                 sessionId = session.id,
                 sessionName = session.name,
                 handle = handle,
@@ -444,9 +394,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun reattachTerminal(tabId: String, cols: Int = 80, rows: Int = 24) {
         val old = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
         launchOperation {
-            val pairing = mutableState.value.config.pairings.first { it.machineId == old.machineId }
             runCatching { old.handle.detach() }
-            val handle = requireRelay().openTerminal(pairing, old.sessionId, cols, rows)
+            val handle = requireRelay().openTerminal(old.machineId, old.sessionId, cols, rows)
             val replacement = old.copy(
                 handle = handle,
                 remoteStatus = TerminalStatus(),
@@ -469,9 +418,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createTerminalWindow(tabId: String) {
-        runTerminalWindowOperation(tabId) { tab, pairing ->
+        runTerminalWindowOperation(tabId) { tab, machineId ->
             val created = requireRelay().request(
-                pairing,
+                machineId,
                 Command.CreateWindow(tab.sessionId, name = null, cwd = null),
             )
             require(created is CommandResult.WindowCreated) {
@@ -615,7 +564,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             profile = profile,
             clientId = config.clientId,
             clientName = config.clientName,
-            initialPairings = config.pairings,
             scope = viewModelScope,
         )
         relayClient = client
@@ -656,13 +604,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun refreshSessionsDirect() {
-        val result = requireRelay().request(selectedPairing(), Command.ListSessions)
+        val result = requireRelay().request(selectedMachineId(), Command.ListSessions)
         require(result is CommandResult.Sessions)
         mutableState.update { it.copy(sessions = result.sessions) }
     }
 
     private suspend fun loadWindowsDirect(sessionId: String) {
-        val result = requireRelay().request(selectedPairing(), Command.ListWindows(sessionId))
+        val result = requireRelay().request(selectedMachineId(), Command.ListWindows(sessionId))
         require(result is CommandResult.Windows)
         mutableState.update {
             it.copy(windowsBySession = it.windowsBySession + (sessionId to result.windows))
@@ -672,7 +620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadTerminalWindowsDirect(tabId: String) {
         val tab = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
         val result = requireRelay().request(
-            pairingForMachine(tab.machineId),
+            tab.machineId,
             Command.ListWindows(tab.sessionId),
         )
         require(result is CommandResult.Windows) { "Agent returned an invalid windows response" }
@@ -681,45 +629,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun runTerminalWindowOperation(
         tabId: String,
-        block: suspend (TerminalTabState, PairingBundle) -> Unit,
+        block: suspend (TerminalTabState, String) -> Unit,
     ) {
         val tab = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
         if (tab.windowBusy || tab.remoteStatus.phase != TerminalPhase.OPEN) return
         updateTab(tabId) { it.copy(windowBusy = true) }
         viewModelScope.launch {
-            runCatching { block(tab, pairingForMachine(tab.machineId)) }.onFailure(::showError)
+            runCatching { block(tab, tab.machineId) }.onFailure(::showError)
             updateTab(tabId) { it.copy(windowBusy = false) }
         }
     }
 
-    private suspend fun detachMachineTerminals(machineId: String) {
-        val tabs = mutableState.value.terminalTabs.filter { it.machineId == machineId }
-        tabs.forEach { tab ->
-            terminalCollectors.remove(tab.id)?.cancel()
-            runCatching { tab.handle.detach() }
-        }
-        if (tabs.isEmpty()) return
-        val removedIds = tabs.mapTo(mutableSetOf(), TerminalTabState::id)
-        mutableState.update { current ->
-            val remaining = current.terminalTabs.filterNot { it.id in removedIds }
-            current.copy(
-                terminalTabs = remaining,
-                activeTerminalId = current.activeTerminalId
-                    ?.takeIf { active -> remaining.any { it.id == active } }
-                    ?: remaining.lastOrNull()?.id,
-            )
-        }
-    }
-
-    private fun selectedPairing(): PairingBundle {
-        val machineId = mutableState.value.selectedMachineId
-            ?: error("No machine is selected")
-        return pairingForMachine(machineId)
-    }
-
-    private fun pairingForMachine(machineId: String): PairingBundle =
-        mutableState.value.config.pairings.firstOrNull { it.machineId == machineId }
-            ?: error("Import this machine's pairing bundle before managing tmux")
+    private fun selectedMachineId(): String =
+        mutableState.value.selectedMachineId ?: error("No machine is selected")
 
     private fun requireRelay(): RelayClient = relayClient ?: error("Relay is not configured")
 

@@ -76,7 +76,6 @@ fun MachineDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val machineId = state.selectedMachineId
-    val pairing = state.config.pairings.firstOrNull { it.machineId == machineId }
     val online = state.onlineMachines[machineId]
     var editTarget by remember { mutableStateOf<EditTarget?>(null) }
     var deleteTarget by remember { mutableStateOf<DeleteTarget?>(null) }
@@ -92,7 +91,7 @@ fun MachineDetailScreen(
                 },
                 title = {
                     Column {
-                        Text(pairing?.machineName ?: online?.name ?: "Machine")
+                        Text(online?.name ?: "Machine")
                         Text(
                             if (online == null) "Offline" else "Online · ${online.os}/${online.arch}",
                             style = MaterialTheme.typography.labelSmall,
@@ -432,8 +431,6 @@ fun SettingsScreen(
     onQuickConnect: (String) -> Unit,
     onSave: (String, String, String, String) -> Unit,
     onTmuxPrefix: (String) -> Unit,
-    onRemovePairing: (String) -> Unit,
-    onImportPairing: () -> Unit,
 ) {
     val relay = state.config.relay
     var name by remember(relay?.name) { mutableStateOf(relay?.name.orEmpty()) }
@@ -442,7 +439,6 @@ fun SettingsScreen(
     var clientName by remember(state.config.clientName) { mutableStateOf(state.config.clientName) }
     var tmuxPrefix by remember(state.config.tmuxPrefix) { mutableStateOf(state.config.tmuxPrefix) }
     var quickConnect by remember { mutableStateOf("") }
-    var removeId by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         modifier = modifier,
@@ -510,7 +506,7 @@ fun SettingsScreen(
             }
             item {
                 Text(
-                    "Release builds require wss://. Credentials and pairings are encrypted with an Android Keystore key and excluded from backups.",
+                    "Release builds require wss://. The Relay client token is encrypted with an Android Keystore key and excluded from backups.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -532,50 +528,7 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Save terminal shortcut") }
             }
-            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Paired machines", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onImportPairing) { Text("Import") }
-                }
-            }
-            items(state.config.pairings, key = { it.machineId }) { pairing ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(pairing.machineName, fontWeight = FontWeight.Medium)
-                            Text(
-                                pairing.machineId,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        IconButton(onClick = { removeId = pairing.machineId }) {
-                            Icon(Icons.Default.Delete, "Remove pairing")
-                        }
-                    }
-                }
-            }
             item { Spacer(Modifier.height(32.dp)) }
         }
-    }
-
-    removeId?.let { machineId ->
-        val machine = state.config.pairings.firstOrNull { it.machineId == machineId }
-        AlertDialog(
-            onDismissRequest = { removeId = null },
-            title = { Text("Remove pairing?") },
-            text = { Text("This removes the local key for ${machine?.machineName ?: machineId}. It does not stop the Agent or any tmux session.") },
-            confirmButton = {
-                Button(onClick = { onRemovePairing(machineId); removeId = null }) {
-                    Text("Remove")
-                }
-            },
-            dismissButton = { TextButton(onClick = { removeId = null }) { Text("Cancel") } },
-        )
     }
 }

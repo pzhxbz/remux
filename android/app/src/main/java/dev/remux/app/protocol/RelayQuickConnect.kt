@@ -1,5 +1,6 @@
 package dev.remux.app.protocol
 
+import dev.remux.app.BuildConfig
 import java.net.URI
 
 data class RelayQuickConnect(
@@ -27,6 +28,9 @@ object RelayQuickConnectParser {
             .getOrElse { throw IllegalArgumentException("Quick-connect value is not a valid address") }
         require(uri.scheme == "ws" || uri.scheme == "wss") {
             "Quick-connect address must use ws:// or wss://"
+        }
+        require(BuildConfig.DEBUG || uri.scheme == "wss") {
+            "Release builds require a wss:// quick-connect address"
         }
         require(!uri.rawAuthority.isNullOrBlank() && !uri.host.isNullOrBlank()) {
             "Quick-connect address must include a server host"

@@ -21,12 +21,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Debug builds may use ws:// for local/LAN verification.
+            manifestPlaceholders["cleartextTraffic"] = "true"
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Release builds only accept wss:// (enforced in code as well).
+            manifestPlaceholders["cleartextTraffic"] = "false"
         }
     }
 
