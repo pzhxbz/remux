@@ -19,8 +19,9 @@ RemoteMux 是一个面向多机器的远程 tmux 控制原型。每台机器运�
 - Android session/window/pane 的创建、查看、重命名和显式关闭；
 - attach 内直接新建 window、按 `index:name` 快速切换当前 tmux client 的 window；
 - Android 多 terminal tab、20,000 行本地历史、未读提示和历史/应用手势切换；
-- CJK/IME、bracketed paste、精确 `Ctrl-C`、Ctrl/Alt、F1–F12 和可配置 tmux prefix；
-- 竖屏优先的紧凑 terminal、IME 打开时的聚焦布局、字体缩放、TalkBack 模式以及 renderer 重建后的无输入 tmux 重绘；
+- App 自有 terminal 键盘可精确发送 `Ctrl-D`/`Ctrl-C`、Ctrl/Alt、tmux prefix 和 bracketed paste，并以 `Fn` 层提供 F1–F12/导航键；
+- `中/EN` 可在自有键盘与支持 CJK composition 的系统 IME 间互斥切换；键盘隐藏时不保留额外按键栏；
+- 竖屏优先的紧凑 terminal、输入时的聚焦布局、字体缩放、TalkBack 模式以及 renderer 重建后的无输入 tmux 重绘；
 - Relay 启动输出一行 `REMUX_APP_CONFIG`，Android 可整行粘贴连接；
 - 所有 tmux 管理命令使用固定 argv，不经过 shell；协议中没有通用远程 exec。
 

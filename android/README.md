@@ -11,9 +11,10 @@
 - 最多 6 个保活 terminal tab，返回机器页不会 detach，关闭 tab 只 detach；
 - xterm.js 6 本地资源、ANSI/truecolor/UTF-8/CJK/IME、20,000 行 scrollback；
 - 上滑历史、未读行提示、回到实时、TUI 应用手势切换和双指字体缩放；
-- `Esc`、`Tab`、可配置 tmux prefix、Ctrl/Alt、精确 `Ctrl-C`、方向键、编辑键和 F1–F12；
+- 点击 terminal 打开 App 自有键盘，精确发送 `Ctrl-D`/`Ctrl-C`、Ctrl/Alt、Esc/Tab、方向键和可配置 tmux prefix；
+- 固定 `中/EN` 键切换系统 CJK IME，`Fn` 扩展层提供 F1–F12、Home/End、PgUp/PgDn、Ins/Del；两种键盘不会同时显示；
 - bracketed paste；多行或超过 200 字符的粘贴先预览确认；
-- 竖屏优先的紧凑 terminal；IME 打开时隐藏导航/window 状态区，保证 xterm 保持可用高度；
+- 竖屏优先的紧凑 terminal；键盘隐藏时不常驻快捷栏，输入时隐藏 window/status 区以保证 xterm 高度；
 - 屏幕旋转后通过 stock tmux `refresh-client` 恢复画面，不向 pane 注入按键；
 - 一行 Quick Connect 配置，仍保留手动 Relay URL/token 设置作为后备；
 - TalkBack 时启用 xterm screen-reader mode；Debug 可用 `ws://`，Release 强制 `wss://`。
@@ -42,7 +43,7 @@ Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。debug build 允�
 1. 复制 Relay 启动时输出的 `REMUX_APP_CONFIG=ws(s)://host:port/~...`，在 Quick Connect 中整行粘贴；也可以输入 `server:port/secret`，或展开 Manual setup；
 2. 用系统文件选择器导入 Agent 生成的 `pairing.toml`；
 3. 在机器页进入目标机器，管理或新建 session，然后点 Attach；
-4. terminal 顶部可新建/切换 window 以及切换“历史手势/应用手势”；点击 terminal 打开键盘后进入聚焦布局，顶部管理区暂时隐藏，系统返回键先收起键盘再恢复完整控制栏。
+4. terminal 顶部可新建/切换 window 以及切换“历史手势/应用手势”；点击 terminal 默认打开 App 自有键盘，`中/EN` 切换系统中文输入法，`Fn` 打开功能键层；系统返回键先收起当前键盘再恢复完整控制栏。
 
 模拟器访问宿主机 Relay 时可使用 `ws://10.0.2.2:<port>`。真实设备应使用可达的 WSS 域名。Quick Connect 行包含 Client token，`~` 后只是 URL-safe 编码而非加密；不要把该行、Relay token 或 pairing 文件提交到版本库。pairing 是每台机器独立的 E2EE 控制凭证，不能由 Relay 连接码替代。
 

@@ -2,7 +2,7 @@
 
 本文既是 Android 交互约束，也是 MVP 实现验收基线。目标不是把桌面键盘生硬搬到手机，而是在触摸、软键盘、小屏幕和不稳定网络下仍然能够可靠操作 tmux、Codex、Claude Code、vim 等 TUI。
 
-当前 MVP 已实现机器/session/window/pane 管理、attach 内 window 创建/切换、多 tab、历史滚动、应用手势切换、未读提示、IME、bracketed paste、可配置 tmux prefix、竖屏紧凑布局、旋转重绘和 TalkBack 基础支持。OSC 52 授权、快捷栏可视化编辑、stream resume、隐藏系统栏的沉浸模式和完整真机 TalkBack 验收仍在后续范围。
+当前 MVP 已实现机器/session/window/pane 管理、attach 内 window 创建/切换、多 tab、历史滚动、应用手势切换、未读提示、自有 terminal 键盘/系统 IME 切换、bracketed paste、可配置 tmux prefix、竖屏紧凑布局、旋转重绘和 TalkBack 基础支持。OSC 52 授权、键盘布局可视化编辑、stream resume、隐藏系统栏的沉浸模式和完整真机 TalkBack 验收仍在后续范围。
 
 ## 1. 核心原则
 
@@ -28,7 +28,7 @@ Relay Profiles
                  ├─ New Window / window switcher
                  ├─ Connection/scroll state chips
                  ├─ xterm viewport
-                 └─ Configurable extra-key rows
+                 └─ Terminal keyboard / system IME switch
 ```
 
 机器数量较多时，机器页必须支持名称搜索、在线/离线筛选、收藏置顶和最近使用排序。机器 ID 只放在详情/诊断中，不作为主要识别信息。
@@ -80,40 +80,52 @@ alternate screen 本身通常没有普通行式 scrollback。不能承诺把全�
 - 应用自身滚动：在“应用手势”模式发送 wheel；
 - tmux copy mode：读取 tmux 自己的 pane history，最符合用户原有环境。
 
-额外按键栏可提供“tmux copy mode”宏，默认建议为 `Ctrl-b [`，但必须允许用户配置或关闭，因为 RemoteMux 不假设用户的 tmux prefix，也不修改 tmux 配置。
+terminal 键盘的扩展层后续可提供“tmux copy mode”宏，默认建议为 `Ctrl-b [`，但必须允许用户配置或关闭，因为 RemoteMux 不假设用户的 tmux prefix，也不修改 tmux 配置。
 
 ## 5. 键盘与快捷键
 
-### 5.1 默认额外按键
+### 5.1 App 自有 terminal 键盘
 
-第一行固定高频操作（横屏或 IME 可见时仅保留这一行）：
+点击 terminal 默认打开 App 自有的紧凑 QWERTY 键盘。它不经过 Android IME 猜测，字符、modifier 和特殊键全部由同一个 terminal encoder 生成确定字节。键盘关闭时整个区域消失，不常驻额外快捷栏。
+
+第一行是可横向滚动的高频 terminal 操作，Paste 位于首屏：
 
 ```text
-Esc  Tab  tmux-prefix  Ctrl  Alt  ^C  ↑  ↓  ←  →
+Esc  Tab  Ctrl  Alt  tmux-prefix  ^C  Paste  ←  ↑  ↓  →
 ```
 
-第二行水平滚动；可视化编辑仍在后续范围：
+底行固定保留布局和输入法切换：
 
 ```text
-Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
+123/ABC  Fn  中/EN  Space  .  /  Enter
+```
+
+`Fn` 不增加新行，而是把 QWERTY 区原位替换为：
+
+```text
+F1…F6
+F7…F12
+Home  End  PgUp  PgDn  Ins  Del
 ```
 
 - `^C` 是独立的快速按钮，立即发送单字节 `0x03`；不能触发 Android 的取消逻辑或复制逻辑；
+- `Ctrl` 后按自有键盘的 `d` 必须发送单字节 `0x04`，不能依赖系统键盘组合事件；
 - `Ctrl`/`Alt` 单击为 one-shot，发送下一键后自动释放；
 - 长按 modifier 切换 locked 状态，再次点击释放；
 - one-shot 与 locked 使用不同图标，并提供轻/重两级触觉反馈；
-- 快捷键顺序、显示文字和发送字节/宏均可配置；
+- 键盘顺序、显示文字和发送字节/宏的可视化配置仍在后续范围；
 - 危险宏不能在默认布局中出现，宏编辑页显示其实际字节预览。
 
 为减少误触，`^C` 与方向键之间保留间距，但不增加二次确认，因为中断前台程序是 terminal 中的高频正常操作。
 
-### 5.2 Android 软键盘和 IME
+### 5.2 Android 系统键盘和 IME
 
-- 点击 terminal 聚焦并打开软键盘；
+- `中/EN` 显式切换到 Gboard 等系统 IME，用于中文、日文、语音输入和厂商输入法能力；
+- App 自有键盘与系统 IME 是互斥状态；系统 IME 仍可见时绝不渲染自有键盘；
 - 中文、日文等 composition 阶段只在本地候选区显示，`compositionend`/commit 后才把 UTF-8 文本发送给 PTY；
-- Backspace、Enter、Tab、Esc、方向键不能依赖 IME 猜测，统一通过 terminal key encoder；
+- 系统 IME 负责组合文本，自有键盘负责 Backspace、Enter、Tab、Esc、Ctrl/Alt、方向键等精确 terminal 字节；
 - 支持 Gboard 等软键盘和物理蓝牙键盘；
-- Android Back：第一次隐藏 IME，IME 已隐藏时才返回上一层；绝不隐式发送 Esc/Ctrl-C；
+- Android Back：先隐藏当前自有键盘或系统 IME，键盘已隐藏时才返回上一层；绝不隐式发送 Esc/Ctrl-C；
 - terminal 获得焦点时禁用系统文本自动更正对命令的改写。
 
 ### 5.3 粘贴与剪贴板
@@ -174,7 +186,7 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
 
 - 可点目标至少 48 dp；
 - 支持系统字体缩放，但 terminal 字体与 UI 字体可分别设置；
-- extra keys 提供 TalkBack label，例如“发送 Control C”，不能只读作字符；
+- terminal 键盘提供 TalkBack label，例如“发送 Control C”，不能只读作字符；
 - 高对比度主题、色盲友好状态、可关闭动画；
 - 支持横屏沉浸模式、保持屏幕常亮开关和外接键盘；
 - 触觉反馈可独立关闭。
@@ -185,13 +197,14 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
 2. 一键返回实时输出；
 3. TUI 开启 mouse tracking 时能在历史手势和应用手势间切换；
 4. `^C` 按钮精确发送 `0x03` 并中断前台程序；
-5. Ctrl one-shot、Ctrl lock、Alt/Esc/Tab/方向键与物理键盘一致；
-6. 中文 IME 组合文本只在 commit 后发送且不重复；
+5. 自有键盘的 Ctrl one-shot/lock、Ctrl-D、Alt/Esc/Tab/方向键发送精确 terminal 字节；
+6. `中/EN` 切换系统 IME 时不出现双键盘；中文组合文本只在 commit 后发送且不重复；
 7. 多行粘贴使用 bracketed paste 并触发安全预览；
 8. pinch/旋转不会造成 resize storm；
 9. 查看历史时切换 tab、网络重连都不丢滚动位置；
 10. tab close 只 detach，session kill 必须二次确认；
 11. 自定义 tmux prefix 可以配置，默认快捷宏不会修改远端配置；
-12. TalkBack 能读出所有额外按键和连接状态。
-13. 竖屏打开 IME 后 xterm 仍保持可操作高度，Android Back 先隐藏 IME 并恢复完整控制栏；
+12. TalkBack 能读出所有 terminal 按键和连接状态。
+13. 竖屏打开任一键盘后 xterm 仍保持可操作高度，Android Back 先隐藏键盘并恢复完整控制栏；
 14. `+ Window` 创建后自动切换，window chips 能在不发送 tmux prefix 的情况下快速切换当前 attach client。
+15. `Fn` 层的 F1–F12、Home/End、PgUp/PgDn、Ins/Del 与 xterm 序列一致，切层不改变 terminal 高度。

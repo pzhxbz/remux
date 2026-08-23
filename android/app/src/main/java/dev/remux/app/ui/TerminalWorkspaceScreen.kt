@@ -6,7 +6,7 @@
 
 package dev.remux.app.ui
 
-import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,7 +35,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TouchApp
@@ -64,22 +63,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.remux.app.network.ConnectionPhase
 import dev.remux.app.network.TerminalPhase
 import dev.remux.app.protocol.WindowInfo
-import dev.remux.app.ui.terminal.ModifierMode
 import dev.remux.app.ui.terminal.TerminalKey
 import dev.remux.app.ui.terminal.TerminalModes
 import dev.remux.app.ui.terminal.TerminalView
@@ -95,7 +89,6 @@ fun TerminalWorkspaceScreen(
     modifier: Modifier = Modifier,
 ) {
     val tabs = state.terminalTabs
-    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val imeVisible = WindowInsets.isImeVisible
     val keyboardFocusMode = imeVisible
     if (tabs.isEmpty()) {
@@ -227,10 +220,12 @@ private fun TerminalPage(
 ) {
     var terminalView by remember(tab.handle.streamId) { mutableStateOf<TerminalView?>(null) }
     var pendingPaste by remember(tab.id) { mutableStateOf<String?>(null) }
+    var inputMode by remember(tab.id) { mutableStateOf(TerminalInputMode.HIDDEN) }
+    var systemImeSeen by remember(tab.id) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
-    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val softwareKeyboard = LocalSoftwareKeyboardController.current
     val imeVisible = WindowInsets.isImeVisible
-    val listener = remember(tab.id, tab.handle.streamId) {
+    val listener = remember(tab.id, tab.handle.streamId, inputMode, imeVisible) {
         object : TerminalViewListener {
             override fun onReady(cols: Int, rows: Int) {
                 viewModel.terminalRendererReady(tab.id, cols, rows)
@@ -260,6 +255,14 @@ private fun TerminalPage(
                 viewModel.updateFontSize(tab.id, value)
             }
 
+            override fun onFocusRequested() {
+                if (inputMode != TerminalInputMode.SYSTEM || !imeVisible) {
+                    terminalView?.setSystemKeyboardEnabled(false)
+                    softwareKeyboard?.hide()
+                    inputMode = TerminalInputMode.CUSTOM
+                }
+            }
+
             override fun onError(message: String) {
                 viewModel.terminalRendererError(tab.id, message)
             }
@@ -279,13 +282,48 @@ private fun TerminalPage(
     LaunchedEffect(tab.fontSize, terminalView) {
         terminalView?.setFontSize(tab.fontSize)
     }
+    LaunchedEffect(inputMode, terminalView, imeVisible) {
+        val view = terminalView ?: return@LaunchedEffect
+        when (inputMode) {
+            TerminalInputMode.HIDDEN -> {
+                view.setSystemKeyboardEnabled(false)
+                softwareKeyboard?.hide()
+            }
+            TerminalInputMode.CUSTOM -> {
+                view.setSystemKeyboardEnabled(false)
+                softwareKeyboard?.hide()
+            }
+            TerminalInputMode.SYSTEM -> view.showSystemKeyboard()
+        }
+    }
+    LaunchedEffect(inputMode, imeVisible) {
+        if (inputMode == TerminalInputMode.SYSTEM && imeVisible) systemImeSeen = true
+        if (inputMode == TerminalInputMode.SYSTEM && systemImeSeen && !imeVisible) {
+            inputMode = TerminalInputMode.HIDDEN
+            systemImeSeen = false
+        }
+    }
+
+    BackHandler(enabled = inputMode == TerminalInputMode.CUSTOM) {
+        inputMode = TerminalInputMode.HIDDEN
+    }
+
+    val requestPaste = {
+        val value = clipboard.getText()?.text.orEmpty()
+        when {
+            value.isEmpty() -> viewModel.reportError("Clipboard is empty")
+            '\u0000' in value -> viewModel.reportError("Paste rejected because it contains NUL")
+            value.contains('\n') || value.length > 200 -> pendingPaste = value
+            else -> viewModel.paste(tab.id, value)
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars)),
     ) {
-        if (!imeVisible) {
+        if (!imeVisible && inputMode != TerminalInputMode.CUSTOM) {
             TerminalStateRow(tab, relayConnected, terminalView, viewModel)
         }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -336,24 +374,22 @@ private fun TerminalPage(
                 }
             }
         }
-        ExtraKeyBar(
-            tab = tab,
-            onKey = { viewModel.sendKey(tab.id, it) },
-            onControlC = { viewModel.sendControlC(tab.id) },
-            onModifier = { ctrl, locked -> viewModel.setModifier(tab.id, ctrl, locked) },
-            onPaste = {
-                val value = clipboard.getText()?.text.orEmpty()
-                when {
-                    value.isEmpty() -> viewModel.reportError("Clipboard is empty")
-                    '\u0000' in value -> viewModel.reportError("Paste rejected because it contains NUL")
-                    value.contains('\n') || value.length > 200 -> pendingPaste = value
-                    else -> viewModel.paste(tab.id, value)
-                }
-            },
-            compact = imeVisible || landscape,
-            dense = imeVisible || !landscape,
-            tmuxPrefix = tmuxPrefix,
-        )
+        if (inputMode == TerminalInputMode.CUSTOM && !imeVisible) {
+            TerminalKeyboard(
+                tab = tab,
+                tmuxPrefix = tmuxPrefix,
+                onText = { viewModel.sendTerminalInput(tab.id, it.encodeToByteArray()) },
+                onKey = { viewModel.sendKey(tab.id, it) },
+                onControlC = { viewModel.sendControlC(tab.id) },
+                onModifier = { ctrl, locked -> viewModel.setModifier(tab.id, ctrl, locked) },
+                onPaste = requestPaste,
+                onSystemIme = {
+                    systemImeSeen = false
+                    inputMode = TerminalInputMode.SYSTEM
+                },
+                onHide = { inputMode = TerminalInputMode.HIDDEN },
+            )
+        }
     }
 
     DisposableEffect(tab.handle.streamId) {
@@ -479,189 +515,6 @@ private fun StatePill(text: String, active: Boolean) {
         color = if (active) Color(0xFF174C3B) else MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Text(text, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-    }
-}
-
-@Composable
-private fun ExtraKeyBar(
-    tab: TerminalTabState,
-    onKey: (TerminalKey) -> Unit,
-    onControlC: () -> Unit,
-    onModifier: (ctrl: Boolean, locked: Boolean) -> Unit,
-    onPaste: () -> Unit,
-    compact: Boolean,
-    dense: Boolean,
-    tmuxPrefix: String,
-) {
-    val verticalPadding = if (dense) 2.dp else 4.dp
-    val horizontalPadding = if (dense) 4.dp else 6.dp
-    val keySpacing = if (dense) 2.dp else 4.dp
-    val keyHeight = if (dense) 34.dp else 48.dp
-    val keyWidth = if (dense) 42.dp else 58.dp
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = verticalPadding),
-        verticalArrangement = Arrangement.spacedBy(keySpacing),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = horizontalPadding),
-            horizontalArrangement = Arrangement.spacedBy(keySpacing),
-        ) {
-            ExtraKeyButton(TerminalKey.ESC, onKey, dense = dense)
-            ExtraKeyButton(TerminalKey.TAB, onKey, dense = dense)
-            ExtraKeyButton(TerminalKey.TMUX_PREFIX, onKey, label = tmuxPrefix, dense = dense)
-            ModifierButton("Ctrl", tab.ctrl, ctrl = true, dense = dense, onModifier = onModifier)
-            ModifierButton("Alt", tab.alt, ctrl = false, dense = dense, onModifier = onModifier)
-            if (!dense) Spacer(Modifier.width(6.dp))
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                modifier = Modifier
-                    .size(width = keyWidth, height = keyHeight)
-                    .combinedClickable(onClick = onControlC)
-                    .semantics { contentDescription = "Send Control C" },
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        "^C",
-                        fontWeight = FontWeight.Bold,
-                        style = if (dense) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
-                    )
-                }
-            }
-            ExtraKeyButton(TerminalKey.UP, onKey, dense = dense)
-            ExtraKeyButton(TerminalKey.DOWN, onKey, dense = dense)
-            ExtraKeyButton(TerminalKey.LEFT, onKey, dense = dense)
-            ExtraKeyButton(TerminalKey.RIGHT, onKey, dense = dense)
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .size(width = keyWidth, height = keyHeight)
-                    .combinedClickable(onClick = onPaste)
-                    .semantics { contentDescription = "Paste clipboard" },
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.ContentPaste,
-                        null,
-                        modifier = Modifier.size(if (dense) 17.dp else 20.dp),
-                    )
-                }
-            }
-        }
-        if (!compact) {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                listOf(
-                    TerminalKey.HOME,
-                    TerminalKey.END,
-                    TerminalKey.PAGE_UP,
-                    TerminalKey.PAGE_DOWN,
-                    TerminalKey.INSERT,
-                    TerminalKey.DELETE,
-                    TerminalKey.F1,
-                    TerminalKey.F2,
-                    TerminalKey.F3,
-                    TerminalKey.F4,
-                    TerminalKey.F5,
-                    TerminalKey.F6,
-                    TerminalKey.F7,
-                    TerminalKey.F8,
-                    TerminalKey.F9,
-                    TerminalKey.F10,
-                    TerminalKey.F11,
-                    TerminalKey.F12,
-                    TerminalKey.PIPE,
-                    TerminalKey.SLASH,
-                    TerminalKey.BACKSLASH,
-                    TerminalKey.DASH,
-                    TerminalKey.UNDERSCORE,
-                ).forEach { key ->
-                    ExtraKeyButton(key = key, onKey = onKey, dense = false)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ExtraKeyButton(
-    key: TerminalKey,
-    onKey: (TerminalKey) -> Unit,
-    label: String = key.label,
-    dense: Boolean,
-) {
-    val haptics = LocalHapticFeedback.current
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier
-            .size(
-                width = if (dense) 42.dp else if (label.length > 4) 68.dp else 54.dp,
-                height = if (dense) 34.dp else 48.dp,
-            )
-            .combinedClickable(
-                onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onKey(key)
-                },
-            )
-            .semantics { contentDescription = key.contentDescription },
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                label,
-                style = if (dense) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModifierButton(
-    label: String,
-    mode: ModifierMode,
-    ctrl: Boolean,
-    dense: Boolean,
-    onModifier: (Boolean, Boolean) -> Unit,
-) {
-    val haptics = LocalHapticFeedback.current
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = when (mode) {
-            ModifierMode.OFF -> MaterialTheme.colorScheme.surfaceVariant
-            ModifierMode.ARMED -> MaterialTheme.colorScheme.secondaryContainer
-            ModifierMode.LOCKED -> MaterialTheme.colorScheme.primaryContainer
-        },
-        modifier = Modifier
-            .size(width = if (dense) 46.dp else 62.dp, height = if (dense) 34.dp else 48.dp)
-            .combinedClickable(
-                onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onModifier(ctrl, false)
-                },
-                onLongClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onModifier(ctrl, true)
-                },
-            )
-            .semantics {
-                contentDescription = "$label modifier"
-                stateDescription = mode.name.lowercase()
-            },
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                when (mode) {
-                    ModifierMode.LOCKED -> "$label 🔒"
-                    ModifierMode.ARMED -> "$label ·"
-                    ModifierMode.OFF -> label
-                },
-                style = if (dense) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
-            )
-        }
     }
 }
 

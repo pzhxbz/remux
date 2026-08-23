@@ -212,6 +212,7 @@ function finishPointer(event) {
 
 terminalElement.addEventListener('pointerup', finishPointer);
 terminalElement.addEventListener('pointercancel', finishPointer);
+terminalElement.addEventListener('click', () => post({ type: 'focus_request' }));
 
 window.addEventListener('message', (event) => {
   if (event.data !== 'remux-init' || !event.ports || event.ports.length !== 1 || nativePort) {

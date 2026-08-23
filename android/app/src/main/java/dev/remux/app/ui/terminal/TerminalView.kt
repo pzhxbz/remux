@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowInsets
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebMessage
@@ -17,6 +19,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.view.accessibility.AccessibilityManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
 import androidx.webkit.WebViewAssetLoader
 import dev.remux.app.BuildConfig
 import dev.remux.app.protocol.RemuxCrypto
@@ -44,6 +49,7 @@ interface TerminalViewListener {
     fun onModesChanged(modes: TerminalModes)
     fun onTitleChanged(title: String)
     fun onFontSizeChanged(value: Int)
+    fun onFocusRequested()
     fun onError(message: String)
 }
 
@@ -58,6 +64,9 @@ class TerminalView(context: Context) : FrameLayout(context) {
     private val accessibilityManager = context.getSystemService(
         Context.ACCESSIBILITY_SERVICE,
     ) as AccessibilityManager
+    private val inputMethodManager = context.getSystemService(
+        Context.INPUT_METHOD_SERVICE,
+    ) as InputMethodManager
     private val accessibilityStateListener = AccessibilityManager.AccessibilityStateChangeListener {
         updateScreenReaderMode()
     }
@@ -68,7 +77,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
     private val assetLoader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
-    private val webView = WebView(context)
+    private val webView = TerminalWebView(context)
     private var nativePort: WebMessagePort? = null
     private var inFlight: QueuedOutput? = null
     private var queuedBytes = 0
@@ -113,6 +122,42 @@ class TerminalView(context: Context) : FrameLayout(context) {
     }
 
     fun focusTerminal() = sendCommand(JSONObject().put("type", "focus"))
+
+    fun setSystemKeyboardEnabled(enabled: Boolean) {
+        runOnMainThread {
+            if (destroyed) return@runOnMainThread
+            webView.systemKeyboardEnabled = enabled
+            if (!enabled) {
+                inputMethodManager.hideSoftInputFromWindow(webView.windowToken, 0)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    webView.windowInsetsController?.hide(WindowInsets.Type.ime())
+                }
+                webView.clearFocus()
+            }
+            inputMethodManager.restartInput(webView)
+        }
+    }
+
+    fun showSystemKeyboard() {
+        runOnMainThread {
+            if (destroyed) return@runOnMainThread
+            webView.systemKeyboardEnabled = true
+            inputMethodManager.restartInput(webView)
+            webView.requestFocus()
+            focusTerminal()
+            webView.post {
+                inputMethodManager.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+    }
+
+    private fun runOnMainThread(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            mainHandler.post(action)
+        }
+    }
 
     fun fit() = sendCommand(JSONObject().put("type", "fit"))
 
@@ -243,6 +288,7 @@ class TerminalView(context: Context) : FrameLayout(context) {
                 )
                 "title" -> listener?.onTitleChanged(message.getString("title"))
                 "font_size" -> listener?.onFontSizeChanged(message.getInt("value"))
+                "focus_request" -> listener?.onFocusRequested()
                 "output_ack" -> acknowledgeOutput(message.getLong("id"))
                 "error" -> listener?.onError(message.getString("message"))
                 "pointer_mode" -> Unit
@@ -313,4 +359,14 @@ class TerminalView(context: Context) : FrameLayout(context) {
         const val MAX_RENDER_QUEUE_BYTES = 4 * 1024 * 1024
         const val MAX_PENDING_COMMANDS = 64
     }
+}
+
+private class TerminalWebView(context: Context) : WebView(context) {
+    var systemKeyboardEnabled: Boolean = false
+
+    override fun onCheckIsTextEditor(): Boolean =
+        systemKeyboardEnabled && super.onCheckIsTextEditor()
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
+        if (systemKeyboardEnabled) super.onCreateInputConnection(outAttrs) else null
 }

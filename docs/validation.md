@@ -82,8 +82,11 @@ macOS attach 路径还验证了 `codex --version` 和 `claude --version` 的远�
 - 运行 `sleep 30` 后点击独立 `^C`，pane 前台命令恢复为 shell；
 - 连续输出 80 行后上滑进入 History，新输出不抢视口并显示未读行数，点击按钮回到 Live；
 - 手动旋转后新的 WebView 通过 `terminal_refresh`/`tmux refresh-client` 自动恢复完整画面；最终交互保持设备方向，不再强制 attach 横屏；
-- 竖屏无键盘时使用 56dp 单行 terminal tab、紧凑 window 行和 12px 默认 terminal 字号；
-- 竖屏 Gboard 打开后隐藏 tab/window/status 区，34dp 快捷区可横向滚动，xterm 实测保持 `46×17`，tmux prefix 与 `^C` 仍可直接使用；
+- 竖屏无键盘时使用 56dp 单行 terminal tab、紧凑 window 行和 12px 默认 terminal 字号；不再常驻额外快捷栏；
+- 点击 xterm 默认打开 App 自有 QWERTY terminal 键盘并隐藏 window/status 区，实测 tmux 保持 `46×30`；Paste 位于首屏高频行；
+- 在自有键盘输入 `cat` 后依次点 Ctrl、`d`，Linux pane 的前台命令从 `cat` 恢复为 `bash`，验证发送单字节 `0x04` 而非字符 `d`；
+- 点击 `Fn` 后原位显示 F1–F12、Home/End、PgUp/PgDn、Ins/Del，不增加键盘高度；
+- 点击 `中/EN` 仅显示 Gboard，Android Back 收起后可重新打开自有键盘；快速切换测试中 `mInputShown=false` 时仅存在自有键盘，未再出现双层键盘；
 - attach 内点击 `+ Window` 在 Linux tmux 创建 `@2` 并自动切换；点击 `0:bash`、`1:second`、`2:bash` chips 时目标 window 的 active 状态与 App 一致；
 - Relay 启动实际输出 `REMUX_APP_CONFIG=ws://192.168.31.233:18787/~...`；App 分别以整行输出和 `192.168.31.233:18787/secret` 简写粘贴重连，机器 pairing 保持且恢复 `1 online`；
 - 强制停止 App 后 Linux session 保持 `1 window / 0 attached`。

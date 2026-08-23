@@ -10,6 +10,7 @@ enum class TerminalKey(val label: String, val contentDescription: String) {
     ESC("Esc", "Send Escape"),
     TAB("Tab", "Send Tab"),
     ENTER("Enter", "Send Enter"),
+    BACKSPACE("⌫", "Send Backspace"),
     UP("↑", "Send Up arrow"),
     DOWN("↓", "Send Down arrow"),
     LEFT("←", "Send Left arrow"),
@@ -139,6 +140,7 @@ object TerminalKeyEncoder {
         TerminalKey.ESC -> byteArrayOf(0x1b)
         TerminalKey.TAB -> byteArrayOf(0x09)
         TerminalKey.ENTER -> byteArrayOf(0x0d)
+        TerminalKey.BACKSPACE -> byteArrayOf(0x7f)
         TerminalKey.UP -> csi("A")
         TerminalKey.DOWN -> csi("B")
         TerminalKey.RIGHT -> csi("C")

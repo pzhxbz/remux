@@ -677,7 +677,7 @@ RelayProfileScreen
                  ├─ TerminalTabs
                  ├─ WindowSwitcher
                  ├─ XtermWebView
-                 └─ ExtraKeyBar
+                 └─ TerminalKeyboard / System IME
 ```
 
 ### 11.3 多 terminal
@@ -687,23 +687,27 @@ RelayProfileScreen
 - App 可同时保留多机器 tab；
 - 后台 tab 可选择暂停渲染但不能丢数据；
 - 达到内存阈值时提示用户 detach，而不是静默杀掉；
-- Terminal Workspace 不强制屏幕方向，手机默认按竖屏使用；IME 打开时进入聚焦布局并隐藏非输入必需的管理栏；
+- Terminal Workspace 不强制屏幕方向，手机默认按竖屏使用；任一键盘打开时进入聚焦布局并隐藏非输入必需的管理栏；
 - 屏幕旋转触发 fit 后发送新的 cols/rows；
 - 每个 tab 查询所 attach session 的 window，并可创建后通过精确 client tty 切换；不发送 tmux prefix，也不改变全局配置。
 
 ### 11.4 手机交互
 
-ExtraKeyBar 默认提供：
+点击 terminal 默认打开 App 自有 terminal 键盘；键盘隐藏时不占据 terminal 空间。高频层提供：
 
 ```text
-Esc  Tab  Ctrl  Alt  ^C  ↑  ↓  ←  →
-Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \\  -  _
+Esc  Tab  Ctrl  Alt  tmux-prefix  ^C  Paste  ←  ↑  ↓  →
+123/ABC  Fn  中/EN  Space  .  /  Enter
 ```
 
 - Ctrl/Alt 为可锁定 modifier；
+- 自有键盘的字符与 modifier 走同一 encoder，例如 Ctrl+D 精确生成 `0x04`；
 - `^C` 直接发送 `0x03`，作为高频中断键，不经过二次确认；
 - 支持一键发送 tmux prefix，但默认值仅作为快捷发送 `Ctrl+B`，不假定用户配置；
-- 用户可编辑按键栏；
+- Paste 保留 bracketed paste 和多行/大文本确认；
+- `中/EN` 与系统 CJK IME 互斥切换，避免自有键盘和系统键盘同时占屏；
+- `Fn` 在原键盘高度内切换到 F1–F12、Home/End、PgUp/PgDn、Ins/Del；
+- 用户可视化编辑键盘布局属于后续范围；
 - terminal 区双指缩放字体；
 - 单指滑动默认滚动 xterm buffer；TUI mouse mode 下提供“历史手势/应用手势”显式切换，双指滑动始终可查看本地历史；
 - 查看历史时新输出不能强制回到底部，显示未读行数和“回到实时”按钮；
