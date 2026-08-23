@@ -25,7 +25,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install stock tmux
@@ -45,7 +45,7 @@ jobs:
     name: Android APKs
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install Java 17
@@ -66,7 +66,7 @@ jobs:
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/remux-android-debug.apk
       - name: Upload Android debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: remux-android-debug
           path: dist/*.apk
@@ -78,7 +78,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release_tag != ''
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install Java 17
@@ -134,7 +134,7 @@ jobs:
             android/app/build/outputs/apk/release/app-release-unsigned.apk
           "$apksigner" verify --verbose --print-certs dist/remux-android-release.apk
       - name: Upload signed Android Release APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: remux-android-release
           path: dist/remux-android-release.apk
@@ -152,7 +152,7 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install Rust target
@@ -160,16 +160,23 @@ jobs:
           rustup toolchain install 1.85.0 --profile minimal
           rustup default 1.85.0
           rustup target add "${{ matrix.target }}"
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
+      - name: Install Zig 0.13.0
+        run: |
+          zig_archive="$RUNNER_TEMP/zig-linux-x86_64-0.13.0.tar.xz"
+          zig_dir="$RUNNER_TEMP/zig-linux-x86_64-0.13.0"
+          curl --fail --location --retry 3 \
+            --output "$zig_archive" \
+            https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $zig_archive" \
+            | sha256sum --check --strict
+          tar --extract --xz --file "$zig_archive" --directory "$RUNNER_TEMP"
+          echo "$zig_dir" >> "$GITHUB_PATH"
       - name: Install cargo-zigbuild
         run: cargo install cargo-zigbuild --version 0.20.1 --locked
       - name: Build static archive
         run: scripts/build-musl.sh "${{ matrix.target }}"
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: remux-linux-${{ matrix.target }}
           path: dist/remux-${{ matrix.target }}.tar.gz
@@ -184,12 +191,12 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
       - name: Generate checksums
-        run: cd dist && sha256sum *.tar.gz *.apk > SHA256SUMS
+        run: cd dist && sha256sum *.tar.gz remux-android-release.apk > SHA256SUMS
       - name: Create GitHub Release and upload files
         env:
           GH_TOKEN: ${{ github.token }}
@@ -201,5 +208,7 @@ jobs:
           fi
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
-          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.apk dist/SHA256SUMS \
+          gh release delete-asset "$RELEASE_TAG" remux-android-debug.apk \
+            --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/remux-android-release.apk dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --clobber
