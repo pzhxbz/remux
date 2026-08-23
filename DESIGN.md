@@ -9,7 +9,7 @@
 
 已经完成 Rust workspace、Relay、Agent、Rust Client 和原生 Android MVP，以及 macOS tmux 3.6a、OrbStack Ubuntu 24.04/tmux 3.4、Android 12 模拟器的端到端验证。
 
-当前是用来验证产品路径的 Phase 1 实现：pairing bundle 保存每台机器的 256-bit 预共享密钥，Client/Agent 业务消息使用 ChaCha20-Poly1305 加密，Relay 只转发密文。生产目标中的一次性 enrollment、Ed25519/X25519 身份握手、前向保密、严格 sequence/replay window、撤销、SQLite、terminal 断线续传和用户级服务安装仍属于 Phase 2，不能把当前验证版直接视为生产安全版本。
+当前是用来验证产品路径的 Phase 1 实现。**更新（protocol v2，2026-08）：pairing bundle 与 ChaCha20-Poly1305 端到端加密已移除**——业务载荷明文经 Relay 转发、仅由 wss 传输层保护，持有 client token 即可管理所有在线机器。生产目标中的一次性 enrollment、Ed25519/X25519 身份握手、前向保密、严格 sequence/replay window、撤销、SQLite、terminal 断线续传和用户级服务安装仍属于 Phase 2，不能把当前验证版直接视为生产安全版本。
 
 当前默认只管理 stock tmux 的 default endpoint。named/explicit socket endpoint 仍保留在目标设计中，尚未进入验证版。
 
@@ -23,7 +23,7 @@ RemoteMux 是一套面向个人多机器环境的远程终端系统：
 - Agent 只向公网 Relay 发起 `WSS/443` 出站连接；
 - Android App 只连接 Relay，统一展示所有机器和 tmux 会话；
 - 手机打开某个会话时，Agent 才创建一个 PTY，并以普通 tmux client 的方式附着；
-- Terminal 的输入输出在手机与 Agent 之间端到端加密；
+- Terminal 的输入输出在手机与 Agent 之间端到端加密（Phase 2 目标；protocol v2 的当前实现无此层）；
 - Relay 只负责在线注册和密文转发，不保存、解析或渲染终端内容；
 - 不 fork、不 patch、不替换 tmux，也不修改任何 tmux 配置。
 

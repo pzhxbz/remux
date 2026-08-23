@@ -1,5 +1,8 @@
 # Rust 与 Android 端到端验证记录
 
+> **注意（2026-08，protocol v2）**：本文记录的是 protocol v1（含 pairing.toml 与 ChaCha20-Poly1305 端到端加密）时期的验证结果。v2 已移除 pairing 与 payload 加密（客户端仅凭 client token 管理所有在线机器），其中涉及 pairing TOML、crypto 向量的条目不再适用，仅作为历史记录保留。
+
+
 验证日期：2026-08-23。
 
 ## 环境

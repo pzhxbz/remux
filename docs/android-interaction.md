@@ -176,7 +176,7 @@ Home  End  PgUp  PgDn  Ins  Del
 - xterm.js 和 addon 固定版本并随 APK 本地打包；
 - 使用 `WebViewAssetLoader` 的受控 HTTPS origin，不允许公网 CDN；
 - 禁止任意 file/content URL、mixed content 和页面导航；
-- token、pairing key 和 AEAD key 只存在 Kotlin 层，不注入 JavaScript；
+- client token 只存在 Kotlin 层，不注入 JavaScript（protocol v2 已移除 pairing key / AEAD 层）；
 - Kotlin 与 terminal 页面通过限定 origin 的 `WebMessagePort` 传输类型化消息；
 - JS 只接触已经解密的当前 terminal 字节以及用户输入字节；
 - bridge 事件至少包含 output、input、resize、scroll-position、mouse-mode、bracketed-paste、alternate-screen 和 title；

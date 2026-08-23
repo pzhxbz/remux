@@ -31,7 +31,7 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 │ Rust CLI Client    │                       │   remux-relay    │
 └────────────────────┘                       │                  │
           │                                  └────────┬─────────┘
-          │ E2EE command / terminal payload           │ WebSocket
+          │ command / terminal payload (protocol v2)  │ WebSocket
           └───────────────────────────────────────────┤
                                                       ▼
                                             ┌──────────────────┐
@@ -43,7 +43,7 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 | 组件 | 产物 | 职责 |
 |---|---|---|
 | Agent | `remux` | 运行在受控机器，管理当前用户的 stock tmux，并提供 PTY attach |
-| Relay | `remux-relay` | 鉴权、机器在线状态与有界密文转发，不持有机器 pairing key |
+| Relay | `remux-relay` | 鉴权、机器在线状态与有界明文转发 |
 | CLI Client | `remux-client` | 发现机器，管理 session/window/pane，并以 raw terminal 附着 |
 | Android App | APK | 多机器管理、terminal tabs、触摸历史、自有终端键盘与系统 IME |
 
@@ -61,7 +61,7 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 
 ### Android
 
-- 机器搜索、在线筛选、收藏、最近使用和 pairing 导入；
+- 机器搜索、在线筛选、收藏和最近使用；
 - session/window/pane 管理与最多 6 个保活 terminal tab；
 - xterm.js 本地资源、20,000 行 scrollback、历史/应用手势切换和字体缩放；
 - App 自有 terminal 键盘，精确支持 Ctrl-D、Ctrl-C、Ctrl/Alt、tmux prefix 和 Paste；
@@ -72,7 +72,7 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 
 ## 安全边界
 
-当前实现使用每台机器独立的 256-bit pairing key，并通过 ChaCha20-Poly1305 保护 Client 与 Agent 之间的业务载荷；Relay 只看到路由元数据和密文。该设计尚未完成独立安全审计。
+自 protocol v2 起，业务载荷（命令与终端内容）以明文经 Relay 转发，仅由 WebSocket TLS 保护传输段。也就是说：**Relay 服务器以及 TLS 路径上的主动中间人都能读取并篡改终端会话内容**——客户端不校验 Relay 证书（Relay 默认使用启动时生成的自签证书）。请只在可信的 Relay 与可信网络上使用；不可信网络应为 Relay 配置 `--tls-cert` 使用公开受信证书。认证模型也随之简化：持有 client token 即可管理 Relay 上所有在线机器，持有 agent token 即可注册任意机器。该设计尚未完成独立安全审计。
 
 以下生产级能力尚未实现或未完成：
 
@@ -81,7 +81,7 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 - 完整重放窗口、持久化状态与系统化速率限制；
 - 公网威胁模型下的渗透测试和第三方密码学审计。
 
-Relay 默认以自签证书提供 `wss://`，agent 与客户端不校验该证书，因此传输只防被动窃听。若 relay 暴露在不可信网络上，请配置真实证书或在前面挂可信的 HTTPS/WSS 反向代理。`REMUX_APP_CONFIG`、Relay token、`agent.toml` 和 `pairing.toml` 都是高权限凭证，不要提交到版本库、CI 日志或发送给第三方。
+Relay 默认以自签证书提供 `wss://`；release 构建的 agent、CLI 和 Android App 只接受 `wss://`（`ws://` 明文仅限 debug 构建）。`REMUX_APP_CONFIG`、Relay token 和 `agent.toml` 都是高权限凭证，不要提交到版本库、CI 日志或发送给第三方。
 
 ## 快速开始
 
@@ -111,7 +111,7 @@ REMUX_APP_CONFIG=wss://0.0.0.0:8787/~<url-safe-client-token>
 - `--tls-cert` / `--tls-key`：改用你自己的 PEM 证书，替代自动生成的自签证书。
 - `--no-tls`：退回明文 `ws://`，用于前面已经挂了 Caddy/Nginx 做 TLS 终止的场景。
 
-> 安全边界：tmux 会话内容由 pairing key 端到端加密，relay 看不到明文。但由于不校验证书，这一层 TLS 只防被动窃听——能实施主动中间人的攻击者可以窃取 relay 的 agent/client token。若你的 relay 暴露在不可信网络上，请配 `--tls-cert` 使用真实证书并在前面做反代。
+> 安全边界：不校验证书意味着这层 TLS 只防被动窃听——relay 本身和 TLS 路径上的主动中间人都能读取并注入终端内容（protocol v2 已无端到端加密），还能窃取 agent/client token。relay 暴露在不可信网络上时，务必用 `--tls-cert` 配真实证书或在前面挂可信反代。
 
 ### 2. 配置受控机器
 
@@ -136,7 +136,7 @@ REMUX_AGENT_TOKEN='replace-with-agent-token' remux config \
 - Linux：`$XDG_CONFIG_HOME/remux/agent.toml` 或 `~/.config/remux/agent.toml`；
 - macOS：`~/Library/Application Support/RemoteMux/agent.toml`。
 
-`agent.toml` 和同目录的 `pairing.toml` 会以 `0600` 创建。请通过安全渠道把 `pairing.toml` 导入客户端；它等价于该机器的远程终端控制凭证。
+`agent.toml` 会以 `0600` 创建。自 protocol v2 起不再需要 pairing.toml——持有 client token 的客户端可以管理 relay 上所有在线机器。
 
 ### 3. 使用 Rust Client
 
@@ -144,10 +144,10 @@ REMUX_AGENT_TOKEN='replace-with-agent-token' remux config \
 export REMUX_CLIENT_TOKEN='replace-with-client-token'
 
 remux-client --relay wss://127.0.0.1:8787 machines
-remux-client sessions --pairing pairing.toml
-remux-client create-session --pairing pairing.toml --name codex --cwd /path/to/repo
-remux-client windows --pairing pairing.toml --session-id '$0'
-remux-client attach --pairing pairing.toml --session-id '$0'
+remux-client --relay wss://127.0.0.1:8787 sessions --machine my-linux-host
+remux-client --relay wss://127.0.0.1:8787 create-session --machine my-linux-host --name codex --cwd /path/to/repo
+remux-client --relay wss://127.0.0.1:8787 windows --machine my-linux-host --session-id '$0'
+remux-client --relay wss://127.0.0.1:8787 attach --machine my-linux-host --session-id '$0'
 ```
 
 attach 后所有 tmux 输入原样发送。Rust Client 自己的 detach 组合键是 `Ctrl+\`，松开后再按 `d`；这只关闭临时 client，不会结束 tmux session。
@@ -155,8 +155,8 @@ attach 后所有 tmux 输入原样发送。Rust Client 自己的 detach 组合�
 破坏性操作必须显式确认：
 
 ```bash
-remux-client kill-window --pairing pairing.toml --window-id '@1' --confirm
-remux-client kill-session --pairing pairing.toml --session-id '$0' --confirm
+remux-client --relay wss://127.0.0.1:8787 kill-window --machine my-linux-host --window-id '@1' --confirm
+remux-client --relay wss://127.0.0.1:8787 kill-session --machine my-linux-host --session-id '$0' --confirm
 ```
 
 所有非交互管理命令均支持全局 `--json`。
@@ -212,7 +212,7 @@ scripts/build-musl.sh aarch64-unknown-linux-musl
 android/             原生 Kotlin / Jetpack Compose Android App
 crates/agent/        受控机器 Agent（binary: remux）
 crates/client/       Rust 验证客户端（binary: remux-client）
-crates/protocol/     公共协议与端到端加密载荷
+crates/protocol/     公共协议与 wss 连接器
 crates/relay/        WebSocket Relay（binary: remux-relay）
 docs/                交互规范与验证记录
 scripts/             musl 静态构建脚本
