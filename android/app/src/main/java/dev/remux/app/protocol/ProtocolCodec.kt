@@ -21,6 +21,12 @@ object ProtocolCodec {
     fun encodeClientPayload(payload: ClientPayload): ByteArray =
         json.encodeToString(ClientPayload.serializer(), payload).encodeToByteArray()
 
+    fun decodeClientPayload(bytes: ByteArray): ClientPayload =
+        json.decodeFromString(ClientPayload.serializer(), bytes.decodeToString())
+
+    fun encodeAgentPayload(payload: AgentPayload): ByteArray =
+        json.encodeToString(AgentPayload.serializer(), payload).encodeToByteArray()
+
     fun decodeAgentPayload(bytes: ByteArray): AgentPayload =
         json.decodeFromString(AgentPayload.serializer(), bytes.decodeToString())
 
