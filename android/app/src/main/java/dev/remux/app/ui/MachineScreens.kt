@@ -40,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -69,6 +70,7 @@ private data class MachineRow(
 fun RelaySetupScreen(
     state: AppUiState,
     modifier: Modifier = Modifier,
+    onQuickConnect: (String) -> Unit,
     onSave: (String, String, String, String) -> Unit,
 ) {
     RelayForm(
@@ -80,6 +82,7 @@ fun RelaySetupScreen(
         initialClientName = state.config.clientName,
         busy = state.busy,
         modifier = modifier,
+        onQuickConnect = onQuickConnect,
         onSave = onSave,
     )
 }
@@ -94,12 +97,15 @@ internal fun RelayForm(
     initialClientName: String,
     busy: Boolean,
     modifier: Modifier = Modifier,
+    onQuickConnect: (String) -> Unit,
     onSave: (String, String, String, String) -> Unit,
 ) {
     var name by remember(initialName) { mutableStateOf(initialName.ifBlank { "Personal Relay" }) }
     var url by remember(initialUrl) { mutableStateOf(initialUrl) }
     var token by remember(initialToken) { mutableStateOf(initialToken) }
     var clientName by remember(initialClientName) { mutableStateOf(initialClientName) }
+    var quickConnect by remember { mutableStateOf("") }
+    var showManual by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()),
@@ -122,45 +128,65 @@ internal fun RelayForm(
                 Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium)
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Profile name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("Relay URL") },
-                    placeholder = { Text("wss://relay.example.com") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it },
-                    label = { Text("Client token") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = clientName,
-                    onValueChange = { clientName = it },
-                    label = { Text("This device") },
+                    value = quickConnect,
+                    onValueChange = { quickConnect = it },
+                    label = { Text("Quick connect") },
+                    placeholder = { Text("server:port/secret") },
+                    supportingText = { Text("Paste the REMUX_APP_CONFIG line printed by the Relay") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Button(
-                    onClick = { onSave(name, url, token, clientName) },
-                    enabled = !busy && url.isNotBlank() && token.length >= 16,
+                    onClick = { onQuickConnect(quickConnect) },
+                    enabled = !busy && quickConnect.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                 ) {
                     if (busy) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("Save and connect")
+                        Text("Connect")
                     }
+                }
+                TextButton(
+                    onClick = { showManual = !showManual },
+                    modifier = Modifier.align(Alignment.End),
+                ) { Text(if (showManual) "Hide manual setup" else "Manual setup") }
+                if (showManual) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Profile name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Relay URL") },
+                        placeholder = { Text("wss://relay.example.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("Client token") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = clientName,
+                        onValueChange = { clientName = it },
+                        label = { Text("This device") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { onSave(name, url, token, clientName) },
+                        enabled = !busy && url.isNotBlank() && token.length >= 16,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) { Text("Save manual setup") }
                 }
             }
         }

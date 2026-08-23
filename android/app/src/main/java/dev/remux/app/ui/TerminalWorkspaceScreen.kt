@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -41,8 +42,10 @@ import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -50,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.remux.app.network.ConnectionPhase
 import dev.remux.app.network.TerminalPhase
+import dev.remux.app.protocol.WindowInfo
 import dev.remux.app.ui.terminal.ModifierMode
 import dev.remux.app.ui.terminal.TerminalKey
 import dev.remux.app.ui.terminal.TerminalModes
@@ -90,6 +95,9 @@ fun TerminalWorkspaceScreen(
     modifier: Modifier = Modifier,
 ) {
     val tabs = state.terminalTabs
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val imeVisible = WindowInsets.isImeVisible
+    val keyboardFocusMode = imeVisible
     if (tabs.isEmpty()) {
         LaunchedEffect(Unit) { viewModel.leaveTerminals() }
         return
@@ -108,30 +116,28 @@ fun TerminalWorkspaceScreen(
     Scaffold(
         modifier = modifier,
         containerColor = Color(0xFF0B1014),
+        contentWindowInsets = WindowInsets(0),
         topBar = {
-            Column {
+            if (keyboardFocusMode) {
+                // The IME leaves limited vertical space. Navigation remains
+                // available through Android Back, which hides the IME before leaving this screen.
+            } else {
                 TopAppBar(
+                    modifier = Modifier.height(56.dp),
+                    windowInsets = WindowInsets(0),
                     navigationIcon = {
                         IconButton(onClick = viewModel::leaveTerminals) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back without detaching")
                         }
                     },
                     title = {
-                        val active = tabs.getOrNull(activeIndex)
-                        Column {
-                            Text(active?.sessionName ?: "Terminal")
-                            Text(
-                                active?.machineName.orEmpty(),
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
+                        TerminalTabBar(
+                            tabs = tabs,
+                            activeId = state.activeTerminalId,
+                            onActivate = viewModel::activateTerminal,
+                            onClose = viewModel::closeTerminal,
+                        )
                     },
-                )
-                TerminalTabBar(
-                    tabs = tabs,
-                    activeId = state.activeTerminalId,
-                    onActivate = viewModel::activateTerminal,
-                    onClose = viewModel::closeTerminal,
                 )
             }
         },
@@ -172,18 +178,18 @@ private fun TerminalTabBar(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         tabs.forEach { tab ->
             val active = tab.id == activeId
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(8.dp),
                 color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.combinedClickable(onClick = { onActivate(tab.id) }),
             ) {
                 Row(
-                    modifier = Modifier.padding(start = 12.dp),
+                    modifier = Modifier.padding(start = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Surface(
@@ -193,17 +199,17 @@ private fun TerminalTabBar(
                             TerminalPhase.CONNECTION_LOST -> Color(0xFFFFC857)
                             else -> Color(0xFFFF6B6B)
                         },
-                        modifier = Modifier.size(8.dp),
+                        modifier = Modifier.size(6.dp),
                     ) {}
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         tab.sessionName,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelMedium,
                     )
-                    IconButton(onClick = { onClose(tab.id) }, modifier = Modifier.size(42.dp)) {
-                        Icon(Icons.Default.Close, "Detach ${tab.sessionName}", modifier = Modifier.size(18.dp))
+                    IconButton(onClick = { onClose(tab.id) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Close, "Detach ${tab.sessionName}", modifier = Modifier.size(15.dp))
                     }
                 }
             }
@@ -345,6 +351,7 @@ private fun TerminalPage(
                 }
             },
             compact = imeVisible || landscape,
+            dense = imeVisible || !landscape,
             tmuxPrefix = tmuxPrefix,
         )
     }
@@ -399,11 +406,42 @@ private fun TerminalStateRow(
     terminalView: TerminalView?,
     viewModel: MainViewModel,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+        FilledTonalButton(
+            onClick = { viewModel.createTerminalWindow(tab.id) },
+            enabled = !tab.windowBusy && tab.remoteStatus.phase == TerminalPhase.OPEN,
+            modifier = Modifier.height(34.dp),
+        ) {
+            Icon(Icons.Default.Add, null, modifier = Modifier.size(15.dp))
+            Text("Window", style = MaterialTheme.typography.labelSmall)
+        }
+        tab.windows.sortedBy(WindowInfo::index).forEach { window ->
+            FilterChip(
+                selected = window.active,
+                onClick = { viewModel.selectTerminalWindow(tab.id, window.id) },
+                enabled = !tab.windowBusy && tab.remoteStatus.phase == TerminalPhase.OPEN,
+                label = {
+                    Text(
+                        "${window.index}:${window.name}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                },
+            )
+        }
+        IconButton(
+            onClick = { viewModel.refreshTerminalWindows(tab.id) },
+            enabled = !tab.windowBusy,
+            modifier = Modifier.size(34.dp),
+        ) {
+            Icon(Icons.Default.Refresh, "Refresh windows", modifier = Modifier.size(18.dp))
+        }
         StatePill(
             text = when {
                 !relayConnected -> "Reconnecting"
@@ -422,10 +460,14 @@ private fun TerminalStateRow(
                 viewModel.setApplicationPointer(tab.id, next)
                 terminalView?.setPointerMode(next)
             },
-            modifier = Modifier.height(36.dp),
+            modifier = Modifier.height(34.dp),
         ) {
-            Icon(Icons.Default.TouchApp, null, modifier = Modifier.size(17.dp))
-            Text(if (tab.applicationPointer) "App gestures" else "History gestures")
+            Icon(Icons.Default.TouchApp, null, modifier = Modifier.size(15.dp))
+            Text(
+                if (tab.applicationPointer) "App gestures" else "History gestures",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
         }
     }
 }
@@ -436,7 +478,7 @@ private fun StatePill(text: String, active: Boolean) {
         shape = RoundedCornerShape(50),
         color = if (active) Color(0xFF174C3B) else MaterialTheme.colorScheme.surfaceVariant,
     ) {
-        Text(text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+        Text(text, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
 
@@ -448,48 +490,62 @@ private fun ExtraKeyBar(
     onModifier: (ctrl: Boolean, locked: Boolean) -> Unit,
     onPaste: () -> Unit,
     compact: Boolean,
+    dense: Boolean,
     tmuxPrefix: String,
 ) {
+    val verticalPadding = if (dense) 2.dp else 4.dp
+    val horizontalPadding = if (dense) 4.dp else 6.dp
+    val keySpacing = if (dense) 2.dp else 4.dp
+    val keyHeight = if (dense) 34.dp else 48.dp
+    val keyWidth = if (dense) 42.dp else 58.dp
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = verticalPadding),
+        verticalArrangement = Arrangement.spacedBy(keySpacing),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = horizontalPadding),
+            horizontalArrangement = Arrangement.spacedBy(keySpacing),
         ) {
-            ExtraKeyButton(TerminalKey.ESC, onKey)
-            ExtraKeyButton(TerminalKey.TAB, onKey)
-            ExtraKeyButton(TerminalKey.TMUX_PREFIX, onKey, label = tmuxPrefix)
-            ModifierButton("Ctrl", tab.ctrl, ctrl = true, onModifier)
-            ModifierButton("Alt", tab.alt, ctrl = false, onModifier)
-            Spacer(Modifier.width(6.dp))
+            ExtraKeyButton(TerminalKey.ESC, onKey, dense = dense)
+            ExtraKeyButton(TerminalKey.TAB, onKey, dense = dense)
+            ExtraKeyButton(TerminalKey.TMUX_PREFIX, onKey, label = tmuxPrefix, dense = dense)
+            ModifierButton("Ctrl", tab.ctrl, ctrl = true, dense = dense, onModifier = onModifier)
+            ModifierButton("Alt", tab.alt, ctrl = false, dense = dense, onModifier = onModifier)
+            if (!dense) Spacer(Modifier.width(6.dp))
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.errorContainer,
                 modifier = Modifier
-                    .size(width = 58.dp, height = 48.dp)
+                    .size(width = keyWidth, height = keyHeight)
                     .combinedClickable(onClick = onControlC)
                     .semantics { contentDescription = "Send Control C" },
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text("^C", fontWeight = FontWeight.Bold)
+                    Text(
+                        "^C",
+                        fontWeight = FontWeight.Bold,
+                        style = if (dense) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
-            ExtraKeyButton(TerminalKey.UP, onKey)
-            ExtraKeyButton(TerminalKey.DOWN, onKey)
-            ExtraKeyButton(TerminalKey.LEFT, onKey)
-            ExtraKeyButton(TerminalKey.RIGHT, onKey)
+            ExtraKeyButton(TerminalKey.UP, onKey, dense = dense)
+            ExtraKeyButton(TerminalKey.DOWN, onKey, dense = dense)
+            ExtraKeyButton(TerminalKey.LEFT, onKey, dense = dense)
+            ExtraKeyButton(TerminalKey.RIGHT, onKey, dense = dense)
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
-                    .size(width = 58.dp, height = 48.dp)
+                    .size(width = keyWidth, height = keyHeight)
                     .combinedClickable(onClick = onPaste)
                     .semantics { contentDescription = "Paste clipboard" },
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.ContentPaste, null, modifier = Modifier.size(20.dp))
+                    Icon(
+                        Icons.Default.ContentPaste,
+                        null,
+                        modifier = Modifier.size(if (dense) 17.dp else 20.dp),
+                    )
                 }
             }
         }
@@ -523,7 +579,7 @@ private fun ExtraKeyBar(
                     TerminalKey.DASH,
                     TerminalKey.UNDERSCORE,
                 ).forEach { key ->
-                    ExtraKeyButton(key = key, onKey = onKey)
+                    ExtraKeyButton(key = key, onKey = onKey, dense = false)
                 }
             }
         }
@@ -535,13 +591,17 @@ private fun ExtraKeyButton(
     key: TerminalKey,
     onKey: (TerminalKey) -> Unit,
     label: String = key.label,
+    dense: Boolean,
 ) {
     val haptics = LocalHapticFeedback.current
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier
-            .size(width = if (label.length > 4) 68.dp else 54.dp, height = 48.dp)
+            .size(
+                width = if (dense) 42.dp else if (label.length > 4) 68.dp else 54.dp,
+                height = if (dense) 34.dp else 48.dp,
+            )
             .combinedClickable(
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -551,7 +611,10 @@ private fun ExtraKeyButton(
             .semantics { contentDescription = key.contentDescription },
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.labelLarge)
+            Text(
+                label,
+                style = if (dense) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
+            )
         }
     }
 }
@@ -561,6 +624,7 @@ private fun ModifierButton(
     label: String,
     mode: ModifierMode,
     ctrl: Boolean,
+    dense: Boolean,
     onModifier: (Boolean, Boolean) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -572,7 +636,7 @@ private fun ModifierButton(
             ModifierMode.LOCKED -> MaterialTheme.colorScheme.primaryContainer
         },
         modifier = Modifier
-            .size(width = 62.dp, height = 48.dp)
+            .size(width = if (dense) 46.dp else 62.dp, height = if (dense) 34.dp else 48.dp)
             .combinedClickable(
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -595,7 +659,7 @@ private fun ModifierButton(
                     ModifierMode.ARMED -> "$label ·"
                     ModifierMode.OFF -> label
                 },
-                style = MaterialTheme.typography.labelLarge,
+                style = if (dense) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelLarge,
             )
         }
     }

@@ -63,4 +63,19 @@ class ProtocolCodecTest {
             encoded,
         )
     }
+
+    @Test
+    fun `terminal window selection matches Rust wire format`() {
+        val encoded = ProtocolCodec.encodeClientPayload(
+            ClientPayload.TerminalSelectWindow(
+                streamId = "01890f5e-b080-7cc0-98d2-a0f9d1f43c03",
+                windowId = "@7",
+            ),
+        ).decodeToString()
+
+        assertEquals(
+            """{"type":"terminal_select_window","stream_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c03","window_id":"@7"}""",
+            encoded,
+        )
+    }
 }

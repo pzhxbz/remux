@@ -160,6 +160,23 @@ impl Tmux {
         )
     }
 
+    pub fn select_client_window(&self, client_name: &Path, window_id: &str) -> Result<()> {
+        validate_id(window_id, '@', "window")?;
+        let output = ProcessCommand::new(&self.binary)
+            .args(["switch-client", "-c"])
+            .arg(client_name)
+            .args(["-t", window_id])
+            .output()
+            .with_context(|| format!("execute {}", self.binary))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        bail!(
+            "tmux failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    }
+
     fn run<I, S>(&self, args: I) -> Result<Output>
     where
         I: IntoIterator<Item = S>,

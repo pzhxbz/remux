@@ -23,6 +23,7 @@ OrbStack 使用了专门创建的 `remux-android-test` 虚拟机，没有复用�
 - ChaCha20-Poly1305 round-trip 与 AAD 绑定测试通过；
 - tmux ID 校验、固定格式解析、Client detach escape 测试通过。
 - Android protocol/crypto/TOML/key encoder/Relay mock 单元测试通过；`assembleDebug`、`assembleRelease` 和 `lintDebug` 通过。
+- Relay Quick Connect 生成/解析、Rust/Android `terminal_select_window` wire format 单元测试通过。
 
 Linux/MSRV 测试发现 Rust 1.85 不支持代码中最初使用的 let-chain 写法，现已改为兼容写法。这是独立 Linux 构建实际发现并修复的差异。
 
@@ -54,6 +55,7 @@ Linux/MSRV 测试发现 Rust 1.85 不支持代码中最初使用的 let-chain �
 - 列出 pane 的 ID、命令、cwd 和尺寸；
 - 未带 `--confirm` 的 kill 操作被 Client 拒绝；
 - session/window 参数按 `$N`/`@N` 内部 ID 校验。
+- attach stream 的 window 切换只允许目标 session 内的 `@window_id`，并使用精确 client tty 调用 stock tmux `switch-client`。
 
 ### raw terminal
 
@@ -79,8 +81,11 @@ macOS attach 路径还验证了 `codex --version` 和 `claude --version` 的远�
 - 输入 `echo terminal-input-ok` 到 Linux PTY 并正确回显；
 - 运行 `sleep 30` 后点击独立 `^C`，pane 前台命令恢复为 shell；
 - 连续输出 80 行后上滑进入 History，新输出不抢视口并显示未读行数，点击按钮回到 Live；
-- 竖屏 attach 后切换横屏，新的 WebView 通过 `terminal_refresh`/`tmux refresh-client` 自动恢复完整画面；
-- 横屏只显示高频快捷行，terminal 保持至少 5 行，tmux prefix 与 `^C` 仍可直接使用；
+- 手动旋转后新的 WebView 通过 `terminal_refresh`/`tmux refresh-client` 自动恢复完整画面；最终交互保持设备方向，不再强制 attach 横屏；
+- 竖屏无键盘时使用 56dp 单行 terminal tab、紧凑 window 行和 12px 默认 terminal 字号；
+- 竖屏 Gboard 打开后隐藏 tab/window/status 区，34dp 快捷区可横向滚动，xterm 实测保持 `46×17`，tmux prefix 与 `^C` 仍可直接使用；
+- attach 内点击 `+ Window` 在 Linux tmux 创建 `@2` 并自动切换；点击 `0:bash`、`1:second`、`2:bash` chips 时目标 window 的 active 状态与 App 一致；
+- Relay 启动实际输出 `REMUX_APP_CONFIG=ws://192.168.31.233:18787/~...`；App 分别以整行输出和 `192.168.31.233:18787/secret` 简写粘贴重连，机器 pairing 保持且恢复 `1 online`；
 - 强制停止 App 后 Linux session 保持 `1 window / 0 attached`。
 
 测试中发现直接向 tmux attach 子进程发送 SIGHUP 会在 stock tmux 3.4 上连带销毁 server。实现已经改为记录 PTY tty，并使用精确的 `tmux detach-client -t <tty>`；新增隔离 socket 集成测试确保 detach 后 session 存活。

@@ -80,6 +80,7 @@ fun RemoteMuxApp(viewModel: MainViewModel) {
             AppScreen.SETUP -> RelaySetupScreen(
                 state = state,
                 modifier = Modifier.padding(padding),
+                onQuickConnect = viewModel::configureQuickConnect,
                 onSave = viewModel::configureRelay,
             )
             AppScreen.MACHINES -> MachineListScreen(
@@ -109,6 +110,7 @@ fun RemoteMuxApp(viewModel: MainViewModel) {
                 state = state,
                 modifier = Modifier.padding(padding),
                 onBack = viewModel::showMachines,
+                onQuickConnect = viewModel::configureQuickConnect,
                 onSave = viewModel::configureRelay,
                 onTmuxPrefix = viewModel::updateTmuxPrefix,
                 onRemovePairing = viewModel::removePairing,

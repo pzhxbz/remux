@@ -429,6 +429,7 @@ fun SettingsScreen(
     state: AppUiState,
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
+    onQuickConnect: (String) -> Unit,
     onSave: (String, String, String, String) -> Unit,
     onTmuxPrefix: (String) -> Unit,
     onRemovePairing: (String) -> Unit,
@@ -440,6 +441,7 @@ fun SettingsScreen(
     var token by remember(relay?.clientToken) { mutableStateOf(relay?.clientToken.orEmpty()) }
     var clientName by remember(state.config.clientName) { mutableStateOf(state.config.clientName) }
     var tmuxPrefix by remember(state.config.tmuxPrefix) { mutableStateOf(state.config.tmuxPrefix) }
+    var quickConnect by remember { mutableStateOf("") }
     var removeId by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
@@ -458,7 +460,28 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("Relay profile", style = MaterialTheme.typography.titleMedium)
+                Text("Quick connect", style = MaterialTheme.typography.titleMedium)
+            }
+            item {
+                OutlinedTextField(
+                    value = quickConnect,
+                    onValueChange = { quickConnect = it },
+                    label = { Text("server:port/secret") },
+                    supportingText = { Text("Paste REMUX_APP_CONFIG from Relay startup") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item {
+                Button(
+                    onClick = { onQuickConnect(quickConnect) },
+                    enabled = !state.busy && quickConnect.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Apply quick connect") }
+            }
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+            item {
+                Text("Manual Relay profile", style = MaterialTheme.typography.titleMedium)
             }
             item {
                 OutlinedTextField(name, { name = it }, label = { Text("Profile name") }, modifier = Modifier.fillMaxWidth())

@@ -2,7 +2,7 @@
 
 本文既是 Android 交互约束，也是 MVP 实现验收基线。目标不是把桌面键盘生硬搬到手机，而是在触摸、软键盘、小屏幕和不稳定网络下仍然能够可靠操作 tmux、Codex、Claude Code、vim 等 TUI。
 
-当前 MVP 已实现机器/session/window/pane 管理、多 tab、历史滚动、应用手势切换、未读提示、IME、bracketed paste、可配置 tmux prefix、旋转重绘和 TalkBack 基础支持。OSC 52 授权、快捷栏可视化编辑、stream resume、沉浸式横屏和完整真机 TalkBack 验收仍在后续范围。
+当前 MVP 已实现机器/session/window/pane 管理、attach 内 window 创建/切换、多 tab、历史滚动、应用手势切换、未读提示、IME、bracketed paste、可配置 tmux prefix、竖屏紧凑布局、旋转重绘和 TalkBack 基础支持。OSC 52 授权、快捷栏可视化编辑、stream resume、隐藏系统栏的沉浸模式和完整真机 TalkBack 验收仍在后续范围。
 
 ## 1. 核心原则
 
@@ -25,6 +25,7 @@ Relay Profiles
             └─ Terminal Workspace
                  ├─ Machine/session breadcrumb
                  ├─ Terminal tabs
+                 ├─ New Window / window switcher
                  ├─ Connection/scroll state chips
                  ├─ xterm viewport
                  └─ Configurable extra-key rows
@@ -134,6 +135,7 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
 - terminal 内容区默认不使用横滑切换 tab，以免与选择、鼠标和 TUI 操作冲突；tab 通过顶部 tab bar 切换；
 - 屏幕旋转或分屏变化在 fit 完成后发送一次稳定尺寸，避免 resize storm。
 - renderer 因旋转重建时，App 先 resize，再请求 Agent 对该 attach client 执行 `tmux refresh-client -t <tty>`；不向 pane 发送 `Ctrl-L`，也不修改 tmux 配置。
+- Terminal Workspace 不强制改变设备方向，默认按竖屏使用；无 IME 时使用单行紧凑 tab bar，IME 打开时暂时隐藏 tab/window/status 区，并把空间优先留给 xterm。
 
 ## 7. Session 与多终端管理
 
@@ -141,6 +143,8 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
 - 新建 session 只填写 name/cwd，明确说明启动默认 shell；
 - cwd 由 Agent 在目标机器校验，不提供远程目录任意浏览 API；
 - terminal tab 标题为 `machine / session`，离线、重连、后台输出用 badge 表示；
+- 已 attach 的 tab 提供 `+ Window` 和按 index 排序的 window chips；创建后只对当前 tmux client 执行 `switch-client`，立即切入新 window；
+- 选择 window 只接受当前 attach session 的 `@window_id`，不写 tmux option、不发送 prefix，也不影响其他 tmux client 当前所看的 window；
 - 切换 tab 不 detach；显式关闭 tab 才 detach；
 - 后台 tab 继续接收和解析输出，渲染可降频但不能丢弃半段 ANSI；
 - 达到内存/队列上限时提示 detach/re-attach，不能静默丢字节后继续使用损坏的 VT 状态；
@@ -189,3 +193,5 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
 10. tab close 只 detach，session kill 必须二次确认；
 11. 自定义 tmux prefix 可以配置，默认快捷宏不会修改远端配置；
 12. TalkBack 能读出所有额外按键和连接状态。
+13. 竖屏打开 IME 后 xterm 仍保持可操作高度，Android Back 先隐藏 IME 并恢复完整控制栏；
+14. `+ Window` 创建后自动切换，window chips 能在不发送 tmux prefix 的情况下快速切换当前 attach client。

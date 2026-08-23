@@ -17,9 +17,11 @@ RemoteMux 是一个面向多机器的远程 tmux 控制原型。每台机器运�
 - Agent/Relay 断线重连，且不终止 tmux session；
 - Android 机器搜索、在线筛选、收藏、最近使用和 pairing 导入；
 - Android session/window/pane 的创建、查看、重命名和显式关闭；
+- attach 内直接新建 window、按 `index:name` 快速切换当前 tmux client 的 window；
 - Android 多 terminal tab、20,000 行本地历史、未读提示和历史/应用手势切换；
 - CJK/IME、bracketed paste、精确 `Ctrl-C`、Ctrl/Alt、F1–F12 和可配置 tmux prefix；
-- 横竖屏、字体缩放、TalkBack 模式以及 renderer 重建后的无输入 tmux 重绘；
+- 竖屏优先的紧凑 terminal、IME 打开时的聚焦布局、字体缩放、TalkBack 模式以及 renderer 重建后的无输入 tmux 重绘；
+- Relay 启动输出一行 `REMUX_APP_CONFIG`，Android 可整行粘贴连接；
 - 所有 tmux 管理命令使用固定 argv，不经过 shell；协议中没有通用远程 exec。
 
 测试过的主要组合：
@@ -96,9 +98,22 @@ scripts/build-musl.sh aarch64-unknown-linux-musl
 ```bash
 remux-relay \
   --listen 127.0.0.1:8787 \
+  --public-url ws://127.0.0.1:8787 \
   --agent-token 'replace-with-agent-token' \
   --client-token 'replace-with-client-token'
 ```
+
+Relay 启动后会输出类似：
+
+```text
+REMUX_APP_CONFIG=ws://127.0.0.1:8787/~<url-safe-client-token>
+```
+
+Android 初始页或 Settings 可以直接粘贴整行，也接受
+`server:port/secret`。如果 Relay 监听 `0.0.0.0`，必须用
+`--public-url ws(s)://<手机可达地址>` 指定输出给 App 的地址。该行包含 Client
+凭证，`~` 后的编码只用于安全地放进单行 URL，并不是加密；不要把它提交到版本库或公开日志。
+机器的 E2EE pairing secret 不经过 Relay，仍需单独、安全地导入 `pairing.toml`。
 
 2. 在需要被管理的机器上配置 Agent：
 

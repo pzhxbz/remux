@@ -218,6 +218,13 @@ sealed interface ClientPayload {
     data class TerminalRefresh(@SerialName("stream_id") val streamId: String) : ClientPayload
 
     @Serializable
+    @SerialName("terminal_select_window")
+    data class TerminalSelectWindow(
+        @SerialName("stream_id") val streamId: String,
+        @SerialName("window_id") val windowId: String,
+    ) : ClientPayload
+
+    @Serializable
     @SerialName("terminal_detach")
     data class TerminalDetach(@SerialName("stream_id") val streamId: String) : ClientPayload
 }

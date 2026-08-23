@@ -122,6 +122,7 @@ Rust 常驻服务，部署在一台有域名和 HTTPS 的 VPS 上。
 职责：
 
 - 认证手机和 Agent；
+- 启动时根据显式 public URL 输出一行 Android Quick Connect 配置；
 - 发放并消费一次性 Agent enrollment token；
 - 维护机器在线状态和最后心跳时间；
 - 将 App 的密文帧路由到目标 Agent；
@@ -139,6 +140,11 @@ Relay 不承担：
 - terminal 内容搜索；
 - 会话录屏；
 - 端到端密钥托管。
+
+当前验证版的 Quick Connect 形如
+`REMUX_APP_CONFIG=wss://relay.example.com/~<base64url-client-token>`。编码只是为了让 token
+成为安全的单段 URL 文本，不提供保密性；启动 stdout 必须按凭证处理。它只配置 Relay
+地址和 Client token，不能承载 Relay 不应知道的逐机器 pairing secret。
 
 ### 4.2 Agent
 
@@ -527,6 +533,7 @@ ListPanes { endpoint_id, window_id }
 OpenTerminal { endpoint_id, session_id, cols, rows, size_policy }
 TerminalInput { stream_id, bytes }
 TerminalResize { stream_id, cols, rows }
+TerminalSelectWindow { stream_id, window_id }
 TerminalDetach { stream_id }
 CreateSession { endpoint_id, name, cwd? }
 CreateWindow { endpoint_id, session_id, name?, cwd? }
@@ -668,6 +675,7 @@ RelayProfileScreen
             │         └─ PaneList
             └─ TerminalWorkspace
                  ├─ TerminalTabs
+                 ├─ WindowSwitcher
                  ├─ XtermWebView
                  └─ ExtraKeyBar
 ```
@@ -679,7 +687,9 @@ RelayProfileScreen
 - App 可同时保留多机器 tab；
 - 后台 tab 可选择暂停渲染但不能丢数据；
 - 达到内存阈值时提示用户 detach，而不是静默杀掉；
-- 屏幕旋转触发 fit 后发送新的 cols/rows。
+- Terminal Workspace 不强制屏幕方向，手机默认按竖屏使用；IME 打开时进入聚焦布局并隐藏非输入必需的管理栏；
+- 屏幕旋转触发 fit 后发送新的 cols/rows；
+- 每个 tab 查询所 attach session 的 window，并可创建后通过精确 client tty 切换；不发送 tmux prefix，也不改变全局配置。
 
 ### 11.4 手机交互
 

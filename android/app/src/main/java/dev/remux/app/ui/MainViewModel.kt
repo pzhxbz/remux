@@ -19,6 +19,7 @@ import dev.remux.app.protocol.MachineInfo
 import dev.remux.app.protocol.PairingBundle
 import dev.remux.app.protocol.PairingToml
 import dev.remux.app.protocol.PaneInfo
+import dev.remux.app.protocol.RelayQuickConnectParser
 import dev.remux.app.protocol.SessionInfo
 import dev.remux.app.protocol.SizePolicy
 import dev.remux.app.protocol.WindowInfo
@@ -55,11 +56,13 @@ data class TerminalTabState(
     val viewport: TerminalViewport = TerminalViewport(),
     val modes: TerminalModes = TerminalModes(),
     val title: String? = null,
-    val fontSize: Int = 14,
+    val fontSize: Int = 12,
     val applicationPointer: Boolean = false,
     val ctrl: ModifierMode = ModifierMode.OFF,
     val alt: ModifierMode = ModifierMode.OFF,
     val rendererError: String? = null,
+    val windows: List<WindowInfo> = emptyList(),
+    val windowBusy: Boolean = false,
 )
 
 data class AppUiState(
@@ -137,6 +140,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(config = updated, screen = AppScreen.MACHINES) }
             replaceRelayClient(updated)
         }
+    }
+
+    fun configureQuickConnect(value: String) {
+        runCatching {
+            RelayQuickConnectParser.parse(
+                value,
+                defaultScheme = if (BuildConfig.DEBUG) "ws" else "wss",
+            )
+        }.onSuccess { quick ->
+            configureRelay(
+                name = "Quick Connect",
+                relayUrl = quick.relayUrl,
+                token = quick.clientToken,
+                clientName = mutableState.value.config.clientName,
+            )
+        }.onFailure(::showError)
     }
 
     fun importPairing(text: String) {
@@ -384,6 +403,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             observeTerminal(tab)
+            loadTerminalWindowsDirect(tab.id)
         }
     }
 
@@ -433,6 +453,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 viewport = TerminalViewport(),
                 modes = TerminalModes(),
                 rendererError = null,
+                windowBusy = false,
             )
             terminalCollectors.remove(tabId)?.cancel()
             mutableState.update { current ->
@@ -443,7 +464,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             observeTerminal(replacement)
+            loadTerminalWindowsDirect(tabId)
         }
+    }
+
+    fun createTerminalWindow(tabId: String) {
+        runTerminalWindowOperation(tabId) { tab, pairing ->
+            val created = requireRelay().request(
+                pairing,
+                Command.CreateWindow(tab.sessionId, name = null, cwd = null),
+            )
+            require(created is CommandResult.WindowCreated) {
+                "Agent returned an invalid create window response"
+            }
+            tab.handle.selectWindow(created.window.id)
+            loadTerminalWindowsDirect(tabId)
+        }
+    }
+
+    fun selectTerminalWindow(tabId: String, windowId: String) {
+        runTerminalWindowOperation(tabId) { tab, _ ->
+            require(tab.windows.any { it.id == windowId }) {
+                "Window is no longer available; refresh the list"
+            }
+            tab.handle.selectWindow(windowId)
+            loadTerminalWindowsDirect(tabId)
+        }
+    }
+
+    fun refreshTerminalWindows(tabId: String) {
+        runTerminalWindowOperation(tabId) { _, _ -> loadTerminalWindowsDirect(tabId) }
     }
 
     fun sendTerminalInput(tabId: String, input: ByteArray, applyModifiers: Boolean = true) {
@@ -619,6 +669,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun loadTerminalWindowsDirect(tabId: String) {
+        val tab = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
+        val result = requireRelay().request(
+            pairingForMachine(tab.machineId),
+            Command.ListWindows(tab.sessionId),
+        )
+        require(result is CommandResult.Windows) { "Agent returned an invalid windows response" }
+        updateTab(tabId) { it.copy(windows = result.windows) }
+    }
+
+    private fun runTerminalWindowOperation(
+        tabId: String,
+        block: suspend (TerminalTabState, PairingBundle) -> Unit,
+    ) {
+        val tab = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
+        if (tab.windowBusy || tab.remoteStatus.phase != TerminalPhase.OPEN) return
+        updateTab(tabId) { it.copy(windowBusy = true) }
+        viewModelScope.launch {
+            runCatching { block(tab, pairingForMachine(tab.machineId)) }.onFailure(::showError)
+            updateTab(tabId) { it.copy(windowBusy = false) }
+        }
+    }
+
     private suspend fun detachMachineTerminals(machineId: String) {
         val tabs = mutableState.value.terminalTabs.filter { it.machineId == machineId }
         tabs.forEach { tab ->
@@ -641,9 +714,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun selectedPairing(): PairingBundle {
         val machineId = mutableState.value.selectedMachineId
             ?: error("No machine is selected")
-        return mutableState.value.config.pairings.firstOrNull { it.machineId == machineId }
-            ?: error("Import this machine's pairing bundle before managing tmux")
+        return pairingForMachine(machineId)
     }
+
+    private fun pairingForMachine(machineId: String): PairingBundle =
+        mutableState.value.config.pairings.firstOrNull { it.machineId == machineId }
+            ?: error("Import this machine's pairing bundle before managing tmux")
 
     private fun requireRelay(): RelayClient = relayClient ?: error("Relay is not configured")
 

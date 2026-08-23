@@ -28,6 +28,7 @@ pub enum AgentEvent {
 
 struct TerminalHandle {
     client_id: Uuid,
+    session_id: String,
     client_tty: PathBuf,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -106,6 +107,7 @@ impl TerminalManager {
             stream_id,
             TerminalHandle {
                 client_id,
+                session_id: session_id.to_owned(),
                 client_tty,
                 master: pty.master,
                 writer,
@@ -210,6 +212,30 @@ impl TerminalManager {
         self.tmux
             .refresh_client(&client_tty)
             .context("refresh tmux client")
+    }
+
+    pub fn select_window(&self, client_id: Uuid, stream_id: Uuid, window_id: &str) -> Result<()> {
+        let (session_id, client_tty) = {
+            let handles = self.handles.lock().unwrap();
+            let handle = handles
+                .get(&stream_id)
+                .context("terminal stream not found")?;
+            anyhow::ensure!(
+                handle.client_id == client_id,
+                "terminal stream belongs to another client"
+            );
+            (handle.session_id.clone(), handle.client_tty.clone())
+        };
+        anyhow::ensure!(
+            self.tmux
+                .list_windows(&session_id)?
+                .iter()
+                .any(|window| window.id == window_id),
+            "window does not belong to the attached session"
+        );
+        self.tmux
+            .select_client_window(&client_tty, window_id)
+            .context("select tmux client window")
     }
 
     pub fn detach(&self, client_id: Uuid, stream_id: Uuid) -> Result<()> {
@@ -345,6 +371,32 @@ mod tests {
             .any(
                 |candidate| candidate.id == session.id && candidate.attached_clients == 1
             )));
+
+        let foreign_session = fixture.tmux.create_session("foreign", None).unwrap();
+        let foreign_window = fixture
+            .tmux
+            .list_windows(&foreign_session.id)
+            .unwrap()
+            .remove(0);
+        assert!(
+            manager
+                .select_window(client_id, stream_id, &foreign_window.id)
+                .is_err()
+        );
+
+        let second = fixture
+            .tmux
+            .create_window(&session.id, Some("second"), None)
+            .unwrap();
+        manager
+            .select_window(client_id, stream_id, &second.id)
+            .unwrap();
+        assert!(wait_until(|| fixture
+            .tmux
+            .list_windows(&session.id)
+            .unwrap()
+            .iter()
+            .any(|window| window.id == second.id && window.active)));
 
         manager.detach(client_id, stream_id).unwrap();
 

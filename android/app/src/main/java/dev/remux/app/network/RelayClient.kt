@@ -102,6 +102,10 @@ class TerminalHandle internal constructor(
         relayClient.refreshTerminal(machineId, streamId)
     }
 
+    suspend fun selectWindow(windowId: String) {
+        relayClient.selectTerminalWindow(machineId, streamId, windowId)
+    }
+
     suspend fun detach() {
         if (closed.compareAndSet(false, true)) {
             try {
@@ -262,6 +266,17 @@ class RelayClient(
 
     internal suspend fun refreshTerminal(machineId: String, streamId: String) {
         sendPayload(requirePairing(machineId), ClientPayload.TerminalRefresh(streamId))
+    }
+
+    internal suspend fun selectTerminalWindow(
+        machineId: String,
+        streamId: String,
+        windowId: String,
+    ) {
+        sendPayload(
+            requirePairing(machineId),
+            ClientPayload.TerminalSelectWindow(streamId, windowId),
+        )
     }
 
     internal suspend fun detachTerminal(machineId: String, streamId: String) {

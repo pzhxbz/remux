@@ -183,6 +183,10 @@ pub enum ClientPayload {
     TerminalRefresh {
         stream_id: Uuid,
     },
+    TerminalSelectWindow {
+        stream_id: Uuid,
+        window_id: String,
+    },
     TerminalDetach {
         stream_id: Uuid,
     },
@@ -371,6 +375,21 @@ mod tests {
         assert_eq!(
             encoded,
             r#"{"type":"terminal_refresh","stream_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c03"}"#
+        );
+    }
+
+    #[test]
+    fn terminal_window_selection_uses_fixed_identifiers() {
+        let stream_id = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c03").unwrap();
+        let encoded = serde_json::to_string(&ClientPayload::TerminalSelectWindow {
+            stream_id,
+            window_id: "@7".into(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            encoded,
+            r#"{"type":"terminal_select_window","stream_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c03","window_id":"@7"}"#
         );
     }
 

@@ -7,9 +7,11 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
+    http::Uri,
     response::Response,
     routing::get,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use remux_protocol::{
@@ -45,6 +47,10 @@ struct Args {
 
     #[arg(long, env = "REMUX_CLIENT_TOKEN", hide_env_values = true)]
     client_token: String,
+
+    /// Public ws:// or wss:// base URL printed in the Android quick-connect code.
+    #[arg(long, env = "REMUX_PUBLIC_URL")]
+    public_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -77,6 +83,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     validate_token("agent", &args.agent_token)?;
     validate_token("client", &args.client_token)?;
+    let public_url = args
+        .public_url
+        .unwrap_or_else(|| format!("ws://{}", args.listen));
+    let quick_connect = quick_connect_code(&public_url, &args.client_token)?;
+    if args.listen.ip().is_unspecified() && public_url.contains("0.0.0.0") {
+        warn!("quick-connect address is not remotely reachable; set --public-url");
+    }
+    println!("REMUX_APP_CONFIG={quick_connect}");
+    println!("This line contains the client credential; treat it as a secret.");
 
     let state = Arc::new(RelayState {
         agent_token: args.agent_token,
@@ -96,6 +111,50 @@ async fn main() -> Result<()> {
         .with_context(|| format!("bind relay to {}", args.listen))?;
     info!(listen = %args.listen, "relay listening; terminate TLS in front of this socket in production");
     axum::serve(listener, app).await.context("serve relay")
+}
+
+fn quick_connect_code(public_url: &str, client_token: &str) -> Result<String> {
+    let base = public_url.trim().trim_end_matches('/');
+    let uri: Uri = base.parse().context("public URL is invalid")?;
+    anyhow::ensure!(
+        matches!(uri.scheme_str(), Some("ws" | "wss")),
+        "public URL must start with ws:// or wss://"
+    );
+    let authority = uri
+        .authority()
+        .context("public URL must include a server host")?;
+    anyhow::ensure!(
+        authority_has_valid_host_and_port(authority.as_str())
+            && uri.path() == "/"
+            && uri.query().is_none(),
+        "public URL must contain only a host and optional port"
+    );
+    Ok(format!(
+        "{base}/~{}",
+        URL_SAFE_NO_PAD.encode(client_token.as_bytes())
+    ))
+}
+
+fn authority_has_valid_host_and_port(authority: &str) -> bool {
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some((host, suffix)) = bracketed.split_once(']') else {
+            return false;
+        };
+        return !host.is_empty()
+            && (suffix.is_empty()
+                || suffix
+                    .strip_prefix(':')
+                    .is_some_and(|port| port.parse::<u16>().is_ok()));
+    }
+    match authority.split_once(':') {
+        Some((host, port)) => {
+            !host.is_empty() && !port.contains(':') && port.parse::<u16>().is_ok()
+        }
+        None => true,
+    }
 }
 
 fn validate_token(kind: &str, token: &str) -> Result<()> {
@@ -454,4 +513,35 @@ async fn broadcast_agents(state: &RelayState, message: WireMessage) {
 
 fn tokens_equal(expected: &str, supplied: &str) -> bool {
     expected.len() == supplied.len() && bool::from(expected.as_bytes().ct_eq(supplied.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_connect_is_single_line_and_url_safe() {
+        let code =
+            quick_connect_code("wss://relay.example.com:443/", "client/token with spaces").unwrap();
+
+        assert_eq!(
+            code,
+            "wss://relay.example.com:443/~Y2xpZW50L3Rva2VuIHdpdGggc3BhY2Vz"
+        );
+    }
+
+    #[test]
+    fn quick_connect_rejects_public_paths() {
+        assert!(quick_connect_code("wss://relay.example.com/base", "token").is_err());
+        assert!(quick_connect_code("wss://user@relay.example.com", "token").is_err());
+        assert!(quick_connect_code("wss://relay.example.com:invalid", "token").is_err());
+    }
+
+    #[test]
+    fn quick_connect_accepts_ipv6_authority() {
+        assert_eq!(
+            quick_connect_code("ws://[::1]:8787", "client-token-0001").unwrap(),
+            "ws://[::1]:8787/~Y2xpZW50LXRva2VuLTAwMDE"
+        );
+    }
 }

@@ -12,7 +12,7 @@ const terminal = new Terminal({
   cursorStyle: 'bar',
   drawBoldTextInBrightColors: true,
   fontFamily: 'ui-monospace, "SFMono-Regular", "Roboto Mono", monospace',
-  fontSize: 14,
+  fontSize: 12,
   lineHeight: 1.12,
   minimumContrastRatio: 4.5,
   rightClickSelectsWord: true,
@@ -61,7 +61,7 @@ let resizeTimer = null;
 let wasAtBottom = true;
 let unreadSinceLeave = 0;
 let lastModes = '';
-let fontSize = 14;
+let fontSize = 12;
 const pointers = new Map();
 let lastPinchDistance = null;
 let accumulatedScrollPixels = 0;

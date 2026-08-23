@@ -310,6 +310,12 @@ where
         ClientPayload::TerminalRefresh { stream_id } => {
             terminals.refresh(client_id, stream_id)?;
         }
+        ClientPayload::TerminalSelectWindow {
+            stream_id,
+            window_id,
+        } => {
+            terminals.select_window(client_id, stream_id, &window_id)?;
+        }
         ClientPayload::TerminalDetach { stream_id } => {
             terminals.detach(client_id, stream_id)?;
         }
