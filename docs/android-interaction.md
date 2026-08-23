@@ -1,6 +1,8 @@
 # Android Terminal 交互规范
 
-本文是 Android 实现前的交互约束。目标不是把桌面键盘生硬搬到手机，而是在触摸、软键盘、小屏幕和不稳定网络下仍然能够可靠操作 tmux、Codex、Claude Code、vim 等 TUI。
+本文既是 Android 交互约束，也是 MVP 实现验收基线。目标不是把桌面键盘生硬搬到手机，而是在触摸、软键盘、小屏幕和不稳定网络下仍然能够可靠操作 tmux、Codex、Claude Code、vim 等 TUI。
+
+当前 MVP 已实现机器/session/window/pane 管理、多 tab、历史滚动、应用手势切换、未读提示、IME、bracketed paste、可配置 tmux prefix、旋转重绘和 TalkBack 基础支持。OSC 52 授权、快捷栏可视化编辑、stream resume、沉浸式横屏和完整真机 TalkBack 验收仍在后续范围。
 
 ## 1. 核心原则
 
@@ -83,16 +85,16 @@ alternate screen 本身通常没有普通行式 scrollback。不能承诺把全�
 
 ### 5.1 默认额外按键
 
-第一行建议固定高频操作：
+第一行固定高频操作（横屏或 IME 可见时仅保留这一行）：
 
 ```text
-Esc  Tab  Ctrl  Alt  ^C  ↑  ↓  ←  →
+Esc  Tab  tmux-prefix  Ctrl  Alt  ^C  ↑  ↓  ←  →
 ```
 
-第二行水平滚动并可编辑：
+第二行水平滚动；可视化编辑仍在后续范围：
 
 ```text
-Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _  tmux-prefix
+Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _
 ```
 
 - `^C` 是独立的快速按钮，立即发送单字节 `0x03`；不能触发 Android 的取消逻辑或复制逻辑；
@@ -131,6 +133,7 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _  tmux-prefix
 - 长按：在 History 模式进入文本选择；Application pointer 模式先显示“选择/发送鼠标”选择条；
 - terminal 内容区默认不使用横滑切换 tab，以免与选择、鼠标和 TUI 操作冲突；tab 通过顶部 tab bar 切换；
 - 屏幕旋转或分屏变化在 fit 完成后发送一次稳定尺寸，避免 resize storm。
+- renderer 因旋转重建时，App 先 resize，再请求 Agent 对该 attach client 执行 `tmux refresh-client -t <tty>`；不向 pane 发送 `Ctrl-L`，也不修改 tmux 配置。
 
 ## 7. Session 与多终端管理
 
@@ -172,7 +175,7 @@ Home  End  PgUp  PgDn  Ins  Del  F1…F12  |  /  \  -  _  tmux-prefix
 - 支持横屏沉浸模式、保持屏幕常亮开关和外接键盘；
 - 触觉反馈可独立关闭。
 
-## 11. Android 实现前验收场景
+## 11. Android 验收场景
 
 1. 持续输出时上滑，视口保持原位且新增行 badge 正确；
 2. 一键返回实时输出；

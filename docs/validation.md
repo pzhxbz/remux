@@ -1,4 +1,4 @@
-# Rust 端到端验证记录
+# Rust 与 Android 端到端验证记录
 
 验证日期：2026-08-23。
 
@@ -10,8 +10,9 @@
 | OrbStack Ubuntu 24.04 | arm64 | 3.4 | 1.85.0 | 主要 Linux/MSRV/PTY 兼容性验证 |
 | Alpine musl 容器 | arm64 | N/A | 1.85.1 musl host | 静态分发构建与执行 |
 | Alpine/Debian 容器 | x86_64 | N/A | 1.85.1 musl host | 静态分发及 glibc 系统执行验证 |
+| Android 12 模拟器 | arm64 / API 31 | N/A | Kotlin/JDK 17 | Android UI、WebView、触摸、IME 与旋转验证 |
 
-OrbStack 使用了专门创建的 `remux-e2e` 虚拟机，没有复用或修改用户已有虚拟机；测试完成后该虚拟机已删除。
+OrbStack 使用了专门创建的 `remux-android-test` 虚拟机，没有复用或修改用户已有虚拟机。Agent 采用 `aarch64-unknown-linux-musl` 静态 binary，tmux 保持 stock 配置。
 
 ## 已通过项目
 
@@ -21,6 +22,7 @@ OrbStack 使用了专门创建的 `remux-e2e` 虚拟机，没有复用或修改�
 - macOS 和 Linux 下 `cargo test --workspace` 通过；
 - ChaCha20-Poly1305 round-trip 与 AAD 绑定测试通过；
 - tmux ID 校验、固定格式解析、Client detach escape 测试通过。
+- Android protocol/crypto/TOML/key encoder/Relay mock 单元测试通过；`assembleDebug`、`assembleRelease` 和 `lintDebug` 通过。
 
 Linux/MSRV 测试发现 Rust 1.85 不支持代码中最初使用的 let-chain 写法，现已改为兼容写法。这是独立 Linux 构建实际发现并修复的差异。
 
@@ -68,6 +70,21 @@ Linux 的实际 PTY attach 验证了：
 
 macOS attach 路径还验证了 `codex --version` 和 `claude --version` 的远程执行输出，分别识别到 Codex CLI 与 Claude Code。当前验证没有把真实账户对话写入测试记录。
 
+### Android → Relay → Linux tmux
+
+在 API 31 arm64 模拟器到 OrbStack Ubuntu 24.04/tmux 3.4 的真实链路上完成：
+
+- 配置 Relay、导入 `pairing.toml`、发现在线 Linux 机器；
+- 从 App 创建 session，显示完整 tmux status、ANSI 和 UTF-8 输出；
+- 输入 `echo terminal-input-ok` 到 Linux PTY 并正确回显；
+- 运行 `sleep 30` 后点击独立 `^C`，pane 前台命令恢复为 shell；
+- 连续输出 80 行后上滑进入 History，新输出不抢视口并显示未读行数，点击按钮回到 Live；
+- 竖屏 attach 后切换横屏，新的 WebView 通过 `terminal_refresh`/`tmux refresh-client` 自动恢复完整画面；
+- 横屏只显示高频快捷行，terminal 保持至少 5 行，tmux prefix 与 `^C` 仍可直接使用；
+- 强制停止 App 后 Linux session 保持 `1 window / 0 attached`。
+
+测试中发现直接向 tmux attach 子进程发送 SIGHUP 会在 stock tmux 3.4 上连带销毁 server。实现已经改为记录 PTY tty，并使用精确的 `tmux detach-client -t <tty>`；新增隔离 socket 集成测试确保 detach 后 session 存活。
+
 ### 故障行为
 
 - 停止 Agent 后，Relay 机器列表变为 offline，Linux tmux session 继续运行；
@@ -83,8 +100,9 @@ macOS attach 路径还验证了 `codex --version` 和 `claude --version` 的远�
 
 - 公网 WSS/Caddy 部署；
 - macOS x86_64 构建；
-- Android App；
-- 真实 Android IME、触摸、鼠标和剪贴板；
+- Android 真机上的多种厂商 IME、蓝牙键盘和完整 TalkBack 验收；
+- OSC 52 剪贴板授权与 terminal 文本选择专项测试；
+- 多小时大输出、六个并行 tab 和低内存回收压力测试；
 - Agent kill -9 与长时间压力/慢消费者测试；
 - 一次性 enrollment、身份签名握手、前向保密、重放保护与客户端撤销；
 - 15 秒断线 grace period 和 terminal stream resume；

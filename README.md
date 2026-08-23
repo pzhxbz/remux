@@ -2,7 +2,7 @@
 
 RemoteMux 是一个面向多机器的远程 tmux 控制原型。每台机器运行一个普通用户权限的 Rust Agent；Agent 只主动连接 Relay。Rust Client 通过同一条 Relay 连接发现机器、管理 tmux session/window/pane，并以 raw terminal 方式附着到完整 tmux UI。
 
-当前完成的是 Android 开发前的 Rust 端到端验证版。Android App 尚未开始。
+当前已经完成 Rust 端到端验证版和原生 Android MVP，并在 Android 12 模拟器到 OrbStack Ubuntu 24.04/stock tmux 3.4 的真实链路上验证。
 
 ## 已实现
 
@@ -15,6 +15,11 @@ RemoteMux 是一个面向多机器的远程 tmux 控制原型。每台机器运�
 - terminal resize、手动 detach、客户端断开清理；
 - 已有 tmux client 时自动使用 `ignore-size`；
 - Agent/Relay 断线重连，且不终止 tmux session；
+- Android 机器搜索、在线筛选、收藏、最近使用和 pairing 导入；
+- Android session/window/pane 的创建、查看、重命名和显式关闭；
+- Android 多 terminal tab、20,000 行本地历史、未读提示和历史/应用手势切换；
+- CJK/IME、bracketed paste、精确 `Ctrl-C`、Ctrl/Alt、F1–F12 和可配置 tmux prefix；
+- 横竖屏、字体缩放、TalkBack 模式以及 renderer 重建后的无输入 tmux 重绘；
 - 所有 tmux 管理命令使用固定 argv，不经过 shell；协议中没有通用远程 exec。
 
 测试过的主要组合：
@@ -46,6 +51,15 @@ Agent 不会安装 tmux，也不会创建、读取后重写或 source `.tmux.con
 cargo build --workspace
 cargo test --workspace
 ```
+
+Android Debug/Release 构建：
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug
+```
+
+Android Studio 可直接打开 `android/`。更完整的使用说明见 [android/README.md](android/README.md)，交互设计与已知边界见 [docs/android-interaction.md](docs/android-interaction.md)。
 
 生成的程序：
 

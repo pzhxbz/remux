@@ -1,13 +1,13 @@
 # RemoteMux 详细设计
 
-> 状态：0.2（Rust 验证版已实现，生产加固与 Android 待实现）
+> 状态：0.3（Rust 验证版与 Android MVP 已实现，生产加固待实现）
 >
 > 目标读者：产品所有者、Android/Rust 开发者、安全评审者
 > 目标设计与当前实现之间的差异，以“当前实现状态”一节为准。
 
 ## 0. 当前实现状态
 
-已经完成 Rust workspace、Relay、Agent、Rust Client，以及 macOS tmux 3.6a 和 OrbStack Ubuntu 24.04/tmux 3.4 的端到端验证。Android App 按计划尚未开始。
+已经完成 Rust workspace、Relay、Agent、Rust Client 和原生 Android MVP，以及 macOS tmux 3.6a、OrbStack Ubuntu 24.04/tmux 3.4、Android 12 模拟器的端到端验证。
 
 当前是用来验证产品路径的 Phase 1 实现：pairing bundle 保存每台机器的 256-bit 预共享密钥，Client/Agent 业务消息使用 ChaCha20-Poly1305 加密，Relay 只转发密文。生产目标中的一次性 enrollment、Ed25519/X25519 身份握手、前向保密、严格 sequence/replay window、撤销、SQLite、terminal 断线续传和用户级服务安装仍属于 Phase 2，不能把当前验证版直接视为生产安全版本。
 
@@ -641,7 +641,7 @@ App 额外按键栏只是生成终端字节，不重新解释 tmux key binding�
 
 ## 11. Android 端详细设计
 
-Android 编码前必须以 `docs/android-interaction.md` 作为交互验收规范。重点不是只有“能显示 terminal”，还必须处理历史滚动、TUI mouse mode 冲突、直接 `Ctrl-C`、可锁定 modifier、CJK IME、bracketed paste、字体缩放/resize、多 tab 和网络重连。下面保留技术架构摘要；手势和状态细节以该文档为准。
+Android 实现以 `docs/android-interaction.md` 作为交互验收规范。重点不是只有“能显示 terminal”，还必须处理历史滚动、TUI mouse mode 冲突、直接 `Ctrl-C`、可锁定 modifier、CJK IME、bracketed paste、字体缩放/resize、多 tab 和网络重连。下面保留技术架构摘要；手势和状态细节以该文档为准。
 
 ### 11.1 技术栈
 
@@ -918,7 +918,7 @@ Linux 正式分发物统一构建为 `x86_64-unknown-linux-musl` 和 `aarch64-un
 - Linux x86_64/aarch64 musl 静态分发与 GitHub Release；
 - VPS Docker/Caddy 部署。
 
-只有 Phase 2 验收通过后才开始 Android。
+Phase 0、Phase 1 和 Android MVP 的核心链路已经完成；Phase 2 中的公网部署和生产身份加固仍未完成。
 
 ### Phase 3：Android MVP
 
