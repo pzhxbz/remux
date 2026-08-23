@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command as ProcessCommand, Output},
 };
 
@@ -123,6 +123,26 @@ impl Tmux {
         validate_id(session_id, '$', "session")?;
         let output = self.run(["list-clients", "-t", session_id, "-F", "#{client_pid}"])?;
         Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+    }
+
+    pub fn detach_client(&self, client_name: &Path) -> Result<()> {
+        let output = ProcessCommand::new(&self.binary)
+            .args(["detach-client", "-t"])
+            .arg(client_name)
+            .output()
+            .with_context(|| format!("execute {}", self.binary))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let error = String::from_utf8_lossy(&output.stderr);
+        if error.contains("can't find client")
+            || error.contains("no current client")
+            || error.contains("no server running")
+            || error.contains("No such file or directory")
+        {
+            return Ok(());
+        }
+        bail!("tmux failed: {}", error.trim())
     }
 
     fn run<I, S>(&self, args: I) -> Result<Output>

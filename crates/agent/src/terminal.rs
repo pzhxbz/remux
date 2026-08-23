@@ -1,11 +1,12 @@
 use std::{
     collections::HashMap,
     io::{Read, Write},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use anyhow::{Context, Result};
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use remux_protocol::{AgentPayload, MAX_TERMINAL_CHUNK_BYTES, SizePolicy, terminal_bytes_to_text};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -27,9 +28,9 @@ pub enum AgentEvent {
 
 struct TerminalHandle {
     client_id: Uuid,
+    client_tty: PathBuf,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
-    killer: Box<dyn ChildKiller + Send + Sync>,
 }
 
 #[derive(Clone)]
@@ -77,6 +78,7 @@ impl TerminalManager {
                 pixel_height: 0,
             })
             .context("create PTY")?;
+        let client_tty = pty.master.tty_name().context("resolve PTY name")?;
         let mut command = CommandBuilder::new(self.tmux.binary());
         command.arg("-u");
         command.arg("attach-session");
@@ -98,16 +100,15 @@ impl TerminalManager {
         drop(pty.slave);
         let mut reader = pty.master.try_clone_reader().context("clone PTY reader")?;
         let writer = pty.master.take_writer().context("take PTY writer")?;
-        let killer = child.clone_killer();
         let stream_id = Uuid::new_v4();
 
         self.handles.lock().unwrap().insert(
             stream_id,
             TerminalHandle {
                 client_id,
+                client_tty,
                 master: pty.master,
                 writer,
-                killer,
             },
         );
 
@@ -195,16 +196,22 @@ impl TerminalManager {
     }
 
     pub fn detach(&self, client_id: Uuid, stream_id: Uuid) -> Result<()> {
-        let mut handles = self.handles.lock().unwrap();
-        let belongs = handles
-            .get(&stream_id)
-            .context("terminal stream not found")?
-            .client_id
-            == client_id;
-        anyhow::ensure!(belongs, "terminal stream belongs to another client");
-        let mut handle = handles.remove(&stream_id).unwrap();
-        drop(handles);
-        handle.killer.kill().context("terminate tmux attach client")
+        let client_tty = {
+            let handles = self.handles.lock().unwrap();
+            let handle = handles
+                .get(&stream_id)
+                .context("terminal stream not found")?;
+            anyhow::ensure!(
+                handle.client_id == client_id,
+                "terminal stream belongs to another client"
+            );
+            handle.client_tty.clone()
+        };
+        self.tmux
+            .detach_client(&client_tty)
+            .context("gracefully detach tmux client")?;
+        self.handles.lock().unwrap().remove(&stream_id);
+        Ok(())
     }
 
     pub fn cleanup(&self, stream_id: Uuid) {
@@ -225,9 +232,112 @@ impl TerminalManager {
     }
 
     pub fn detach_all(&self) {
-        let handles = std::mem::take(&mut *self.handles.lock().unwrap());
-        for (_, mut handle) in handles {
-            let _ = handle.killer.kill();
+        let handles: Vec<_> = self
+            .handles
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(stream_id, handle)| (*stream_id, handle.client_id))
+            .collect();
+        for (stream_id, client_id) in handles {
+            let _ = self.detach(client_id, stream_id);
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::{
+        fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command as ProcessCommand,
+        thread, time::Duration,
+    };
+
+    use super::*;
+
+    struct IsolatedTmux {
+        directory: PathBuf,
+        wrapper: PathBuf,
+        tmux: Tmux,
+    }
+
+    impl IsolatedTmux {
+        fn create() -> Option<Self> {
+            if ProcessCommand::new("tmux").arg("-V").output().is_err() {
+                return None;
+            }
+            let socket_name = format!("remux-test-{}", Uuid::new_v4().simple());
+            let directory = std::env::temp_dir().join(&socket_name);
+            fs::create_dir(&directory).unwrap();
+            let wrapper = directory.join("tmux");
+            fs::write(
+                &wrapper,
+                format!("#!/bin/sh\nexec tmux -L {socket_name} \"$@\"\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+            let tmux = Tmux::new(wrapper.to_string_lossy().into_owned());
+            Some(Self {
+                directory,
+                wrapper,
+                tmux,
+            })
+        }
+    }
+
+    impl Drop for IsolatedTmux {
+        fn drop(&mut self) {
+            let _ = ProcessCommand::new(&self.wrapper)
+                .arg("kill-server")
+                .output();
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn wait_until(mut predicate: impl FnMut() -> bool) -> bool {
+        for _ in 0..200 {
+            if predicate() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn graceful_detach_preserves_the_tmux_session() {
+        let Some(fixture) = IsolatedTmux::create() else {
+            eprintln!("tmux is unavailable; skipping integration assertion");
+            return;
+        };
+        let session = fixture
+            .tmux
+            .create_session("detach-survives", None)
+            .unwrap();
+        let (events, _receiver) = mpsc::channel(64);
+        let manager = TerminalManager::new(fixture.tmux.clone(), events);
+        let client_id = Uuid::new_v4();
+        let (stream_id, _) = manager
+            .open(client_id, &session.id, 80, 24, SizePolicy::Auto)
+            .unwrap();
+
+        assert!(wait_until(|| fixture
+            .tmux
+            .list_sessions()
+            .unwrap()
+            .iter()
+            .any(
+                |candidate| candidate.id == session.id && candidate.attached_clients == 1
+            )));
+
+        manager.detach(client_id, stream_id).unwrap();
+
+        assert!(wait_until(|| fixture
+            .tmux
+            .list_sessions()
+            .unwrap()
+            .iter()
+            .any(
+                |candidate| candidate.id == session.id && candidate.attached_clients == 0
+            )));
     }
 }
