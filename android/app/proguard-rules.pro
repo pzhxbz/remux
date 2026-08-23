@@ -1,0 +1,2 @@
+-keepattributes *Annotation*
+-keepclassmembers class dev.remux.app.protocol.** { *; }

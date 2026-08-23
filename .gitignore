@@ -6,3 +6,13 @@ pairing.toml
 *.local.toml
 *.pairing.toml
 .DS_Store
+
+# Android/Gradle local state
+/android/.gradle/
+/android/.idea/
+/android/.kotlin/
+/android/local.properties
+/android/**/build/
+/android/captures/
+/android/.externalNativeBuild/
+/android/.cxx/
