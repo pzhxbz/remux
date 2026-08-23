@@ -71,6 +71,12 @@ enum AgentCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // tokio-tungstenite pulls in rustls without a default CryptoProvider, so
+    // select one explicitly before any wss:// connection is attempted.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .with_target(false)
