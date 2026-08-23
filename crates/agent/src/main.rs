@@ -10,12 +10,11 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use config::{AgentConfig, default_config_path, default_machine_name, default_pairing_path};
+use config::{AgentConfig, default_config_path, default_machine_name};
 use futures_util::{Sink, SinkExt, StreamExt};
 use remux_protocol::{
     AgentPayload, ClientPayload, Command, CommandResult, MachineInfo, PROTOCOL_VERSION,
-    WireMessage, agent_aad, client_aad, decode_secret, open, relay_connector, seal,
-    terminal_text_to_bytes, wire_from_text, wire_to_text,
+    WireMessage, relay_connector, terminal_text_to_bytes, wire_from_text, wire_to_text,
 };
 use terminal::{AgentEvent, TerminalManager};
 use tokio::{sync::mpsc, time::MissedTickBehavior};
@@ -33,15 +32,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum AgentCommand {
-    /// Configure this machine and generate a client pairing bundle.
+    /// Configure this machine for relay access.
     #[command(alias = "init")]
     Config {
         #[arg(long, env = "REMUX_CONFIG", default_value_os_t = default_config_path())]
         config: PathBuf,
-
-        /// Output path; defaults to pairing.toml beside the agent config.
-        #[arg(long)]
-        pairing: Option<PathBuf>,
 
         #[arg(long)]
         relay: Option<String>,
@@ -85,7 +80,6 @@ async fn main() -> Result<()> {
     match Args::parse().command {
         AgentCommand::Config {
             config,
-            pairing,
             relay,
             token,
             name,
@@ -105,12 +99,9 @@ async fn main() -> Result<()> {
             );
             validate_relay_url(&relay)?;
             anyhow::ensure!(!name.trim().is_empty(), "machine name cannot be empty");
-            let pairing = pairing.unwrap_or_else(|| default_pairing_path(&config));
             let config_value = AgentConfig::new(relay, token, name, tmux);
             config_value.save(&config)?;
-            config_value.save_pairing(&pairing)?;
             println!("agent config: {}", config.display());
-            println!("client pairing bundle: {}", pairing.display());
             println!("machine id: {}", config_value.machine_id);
             println!("next: remux run --config {}", config.display());
         }
@@ -135,7 +126,6 @@ fn prompt_nonempty(prompt: &str) -> Result<String> {
 fn doctor(path: &Path) -> Result<()> {
     let config = AgentConfig::load(path)?;
     validate_relay_url(&config.relay_url)?;
-    let _ = decode_secret(&config.machine_secret)?;
     let tmux = tmux::Tmux::new(config.tmux_binary.clone());
     let version = tmux.version()?;
     let sessions = tmux.list_sessions()?;
@@ -149,7 +139,6 @@ fn doctor(path: &Path) -> Result<()> {
 
 async fn run_forever(config: AgentConfig) -> Result<()> {
     validate_relay_url(&config.relay_url)?;
-    let secret = decode_secret(&config.machine_secret)?;
     let tmux = tmux::Tmux::new(config.tmux_binary.clone());
     info!(version = %tmux.version()?, "tmux available");
 
@@ -158,15 +147,7 @@ async fn run_forever(config: AgentConfig) -> Result<()> {
     let mut retry_seconds = 1_u64;
 
     loop {
-        match run_connection(
-            &config,
-            &secret,
-            &terminals,
-            &mut event_rx,
-            &mut retry_seconds,
-        )
-        .await
-        {
+        match run_connection(&config, &terminals, &mut event_rx, &mut retry_seconds).await {
             Ok(()) => warn!("relay connection closed"),
             // `{:#}` renders the whole anyhow chain; plain Display hides the root cause.
             Err(error) => warn!(error = format!("{error:#}"), "relay connection failed"),
@@ -181,7 +162,6 @@ async fn run_forever(config: AgentConfig) -> Result<()> {
 
 async fn run_connection(
     config: &AgentConfig,
-    secret: &[u8; 32],
     terminals: &TerminalManager,
     event_rx: &mut mpsc::Receiver<AgentEvent>,
     retry_seconds: &mut u64,
@@ -224,22 +204,11 @@ async fn run_connection(
                         *retry_seconds = 1;
                         info!(%connection_id, machine_id = %config.machine_id, "agent connected");
                     }
-                    WireMessage::DeliverToAgent { client_id, sealed } => {
-                        let aad = client_aad(config.machine_id, client_id);
-                        match open::<ClientPayload>(secret, aad.as_bytes(), &sealed) {
-                            Ok(payload) => {
-                                if let Err(error) = handle_client_payload(
-                                    config.machine_id,
-                                    secret,
-                                    client_id,
-                                    payload,
-                                    terminals,
-                                    &mut sink,
-                                ).await {
-                                    warn!(%client_id, %error, "client payload failed");
-                                }
-                            }
-                            Err(error) => warn!(%client_id, %error, "rejected encrypted client payload"),
+                    WireMessage::DeliverToAgent { client_id, payload } => {
+                        if let Err(error) =
+                            handle_client_payload(client_id, payload, terminals, &mut sink).await
+                        {
+                            warn!(%client_id, %error, "client payload failed");
                         }
                     }
                     WireMessage::ClientDisconnected { client_id } => terminals.detach_client(client_id),
@@ -253,13 +222,11 @@ async fn run_connection(
                 let event = event.context("terminal event channel closed")?;
                 match event {
                     AgentEvent::Payload { client_id, payload } => {
-                        send_agent_payload(config.machine_id, secret, client_id, payload, &mut sink).await?;
+                        send_agent_payload(client_id, payload, &mut sink).await?;
                     }
                     AgentEvent::Exited { client_id, stream_id, exit_code } => {
                         terminals.cleanup(stream_id);
                         send_agent_payload(
-                            config.machine_id,
-                            secret,
                             client_id,
                             AgentPayload::TerminalClosed {
                                 stream_id,
@@ -267,7 +234,8 @@ async fn run_connection(
                                 exit_code,
                             },
                             &mut sink,
-                        ).await?;
+                        )
+                        .await?;
                     }
                 }
             }
@@ -279,8 +247,6 @@ async fn run_connection(
 }
 
 async fn handle_client_payload<S>(
-    machine_id: Uuid,
-    secret: &[u8; 32],
     client_id: Uuid,
     payload: ClientPayload,
     terminals: &TerminalManager,
@@ -303,7 +269,7 @@ where
                     message: format!("{error:#}"),
                 },
             };
-            send_agent_payload(machine_id, secret, client_id, response, sink).await?;
+            send_agent_payload(client_id, response, sink).await?;
         }
         ClientPayload::TerminalInput { stream_id, data } => {
             terminals.input(client_id, stream_id, &terminal_text_to_bytes(&data)?)?;
@@ -395,20 +361,12 @@ fn execute_command(
     }
 }
 
-async fn send_agent_payload<S>(
-    machine_id: Uuid,
-    secret: &[u8; 32],
-    client_id: Uuid,
-    payload: AgentPayload,
-    sink: &mut S,
-) -> Result<()>
+async fn send_agent_payload<S>(client_id: Uuid, payload: AgentPayload, sink: &mut S) -> Result<()>
 where
     S: Sink<Message> + Unpin,
     S::Error: std::error::Error + Send + Sync + 'static,
 {
-    let aad = agent_aad(machine_id, client_id);
-    let sealed = seal(secret, aad.as_bytes(), &payload)?;
-    send_wire(sink, WireMessage::RouteToClient { client_id, sealed }).await
+    send_wire(sink, WireMessage::RouteToClient { client_id, payload }).await
 }
 
 async fn send_wire<S>(sink: &mut S, message: WireMessage) -> Result<()>
@@ -439,6 +397,12 @@ fn validate_relay_url(url: &str) -> Result<()> {
     anyhow::ensure!(
         url.starts_with("ws://") || url.starts_with("wss://"),
         "relay URL must start with ws:// or wss://"
+    );
+    // Payloads are plaintext over the wire (protocol v2), so release builds
+    // refuse unencrypted transport; ws:// is for development only.
+    anyhow::ensure!(
+        cfg!(debug_assertions) || url.starts_with("wss://"),
+        "release builds require a wss:// relay URL (plaintext ws:// is only available in debug builds)"
     );
     Ok(())
 }

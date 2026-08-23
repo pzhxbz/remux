@@ -1,10 +1,12 @@
 //! WebSocket TLS setup shared by the agent and the CLI client.
 //!
 //! The relay serves an ephemeral self-signed certificate by default, so peers
-//! cannot validate it against the webpki roots. Session traffic is already
-//! sealed end-to-end with the pairing key, and TLS here only protects the
-//! transport from passive observers — an active MITM is explicitly out of
-//! scope for this configuration.
+//! cannot validate it against the webpki roots and this connector accepts any
+//! certificate. TLS here encrypts the transport but does NOT authenticate the
+//! relay: the relay itself, and any active MITM on the TLS path, can read and
+//! modify all traffic (there is no end-to-end payload encryption). On hostile
+//! networks, run the relay with `--tls-cert` using a publicly trusted
+//! certificate.
 
 use std::sync::Arc;
 

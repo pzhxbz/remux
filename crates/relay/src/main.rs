@@ -34,11 +34,7 @@ const OUTBOUND_QUEUE: usize = 256;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "remux-relay",
-    version,
-    about = "RemoteMux encrypted routing relay"
-)]
+#[command(name = "remux-relay", version, about = "RemoteMux routing relay")]
 struct Args {
     #[arg(long, env = "REMUX_RELAY_LISTEN", default_value = "127.0.0.1:8787")]
     listen: SocketAddr,
@@ -323,12 +319,15 @@ async fn handle_agent(mut socket: WebSocket, state: Arc<RelayState>) {
             }
         };
         match message {
-            WireMessage::RouteToClient { client_id, sealed } => {
+            WireMessage::RouteToClient { client_id, payload } => {
                 let client = state.clients.read().await.get(&client_id).cloned();
                 if let Some(client) = client {
                     let _ = client
                         .tx
-                        .send(WireMessage::DeliverToClient { machine_id, sealed })
+                        .send(WireMessage::DeliverToClient {
+                            machine_id,
+                            payload,
+                        })
                         .await;
                 }
             }
@@ -450,12 +449,15 @@ async fn handle_client(mut socket: WebSocket, state: Arc<RelayState>) {
             }
         };
         match message {
-            WireMessage::RouteToAgent { machine_id, sealed } => {
+            WireMessage::RouteToAgent {
+                machine_id,
+                payload,
+            } => {
                 let agent = state.agents.read().await.get(&machine_id).cloned();
                 if let Some(agent) = agent {
                     if agent
                         .tx
-                        .send(WireMessage::DeliverToAgent { client_id, sealed })
+                        .send(WireMessage::DeliverToAgent { client_id, payload })
                         .await
                         .is_err()
                     {

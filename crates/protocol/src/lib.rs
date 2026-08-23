@@ -5,15 +5,10 @@ pub use tls::relay_connector;
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chacha20poly1305::{
-    ChaCha20Poly1305, Key, Nonce,
-    aead::{Aead, KeyInit, Payload},
-};
-use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_WIRE_MESSAGE_BYTES: usize = 96 * 1024;
 pub const MAX_TERMINAL_CHUNK_BYTES: usize = 32 * 1024;
 
@@ -24,12 +19,6 @@ pub struct MachineInfo {
     pub os: String,
     pub arch: String,
     pub agent_version: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SealedPayload {
-    pub nonce: String,
-    pub ciphertext: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,19 +49,19 @@ pub enum WireMessage {
     },
     RouteToAgent {
         machine_id: Uuid,
-        sealed: SealedPayload,
+        payload: ClientPayload,
     },
     DeliverToAgent {
         client_id: Uuid,
-        sealed: SealedPayload,
+        payload: ClientPayload,
     },
     RouteToClient {
         client_id: Uuid,
-        sealed: SealedPayload,
+        payload: AgentPayload,
     },
     DeliverToClient {
         machine_id: Uuid,
-        sealed: SealedPayload,
+        payload: AgentPayload,
     },
     ClientDisconnected {
         client_id: Uuid,
@@ -232,34 +221,6 @@ pub enum AgentPayload {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PairingBundle {
-    pub version: u16,
-    pub relay_url: String,
-    pub machine_id: Uuid,
-    pub machine_name: String,
-    pub machine_secret: String,
-}
-
-pub fn generate_secret() -> [u8; 32] {
-    let mut secret = [0_u8; 32];
-    OsRng.fill_bytes(&mut secret);
-    secret
-}
-
-pub fn encode_secret(secret: &[u8; 32]) -> String {
-    URL_SAFE_NO_PAD.encode(secret)
-}
-
-pub fn decode_secret(encoded: &str) -> Result<[u8; 32]> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .context("machine secret is not valid base64url")?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("machine secret must be exactly 32 bytes"))
-}
-
 pub fn terminal_bytes_to_text(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -268,65 +229,6 @@ pub fn terminal_text_to_bytes(text: &str) -> Result<Vec<u8>> {
     URL_SAFE_NO_PAD
         .decode(text)
         .context("terminal payload is not valid base64url")
-}
-
-pub fn client_aad(machine_id: Uuid, client_id: Uuid) -> String {
-    format!("remux/v1/client-to-agent/{machine_id}/{client_id}")
-}
-
-pub fn agent_aad(machine_id: Uuid, client_id: Uuid) -> String {
-    format!("remux/v1/agent-to-client/{machine_id}/{client_id}")
-}
-
-pub fn seal<T: Serialize>(secret: &[u8; 32], aad: &[u8], value: &T) -> Result<SealedPayload> {
-    let plaintext = serde_json::to_vec(value).context("serialize encrypted payload")?;
-    let key: Key = (*secret).into();
-    let cipher = ChaCha20Poly1305::new(&key);
-    let mut nonce_bytes = [0_u8; 12];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce: Nonce = nonce_bytes.into();
-    let ciphertext = cipher
-        .encrypt(
-            &nonce,
-            Payload {
-                msg: &plaintext,
-                aad,
-            },
-        )
-        .map_err(|_| anyhow::anyhow!("encrypt payload"))?;
-    Ok(SealedPayload {
-        nonce: URL_SAFE_NO_PAD.encode(nonce_bytes),
-        ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
-    })
-}
-
-pub fn open<T: for<'de> Deserialize<'de>>(
-    secret: &[u8; 32],
-    aad: &[u8],
-    sealed: &SealedPayload,
-) -> Result<T> {
-    let nonce = URL_SAFE_NO_PAD
-        .decode(&sealed.nonce)
-        .context("decode encrypted nonce")?;
-    let nonce_bytes: [u8; 12] = nonce
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("encrypted nonce must be 12 bytes"))?;
-    let ciphertext = URL_SAFE_NO_PAD
-        .decode(&sealed.ciphertext)
-        .context("decode encrypted payload")?;
-    let key: Key = (*secret).into();
-    let cipher = ChaCha20Poly1305::new(&key);
-    let nonce: Nonce = nonce_bytes.into();
-    let plaintext = cipher
-        .decrypt(
-            &nonce,
-            Payload {
-                msg: &ciphertext,
-                aad,
-            },
-        )
-        .map_err(|_| anyhow::anyhow!("payload authentication failed"))?;
-    serde_json::from_slice(&plaintext).context("decode encrypted JSON payload")
 }
 
 pub fn wire_to_text(message: &WireMessage) -> Result<String> {
@@ -347,30 +249,6 @@ pub fn wire_from_text(text: &str) -> Result<WireMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn payload_round_trip_and_aad_binding() {
-        let secret = generate_secret();
-        let machine = Uuid::new_v4();
-        let client = Uuid::new_v4();
-        let payload = ClientPayload::Request {
-            request_id: Uuid::new_v4(),
-            command: Command::ListSessions,
-        };
-        let aad = client_aad(machine, client);
-        let sealed = seal(&secret, aad.as_bytes(), &payload).unwrap();
-        let opened: ClientPayload = open(&secret, aad.as_bytes(), &sealed).unwrap();
-        assert_eq!(opened, payload);
-
-        let wrong_aad = client_aad(Uuid::new_v4(), client);
-        assert!(open::<ClientPayload>(&secret, wrong_aad.as_bytes(), &sealed).is_err());
-    }
-
-    #[test]
-    fn secret_round_trip() {
-        let secret = generate_secret();
-        assert_eq!(decode_secret(&encode_secret(&secret)).unwrap(), secret);
-    }
 
     #[test]
     fn terminal_refresh_uses_the_v1_extension_wire_format() {
@@ -399,31 +277,23 @@ mod tests {
     }
 
     #[test]
-    fn android_chacha20_poly1305_vector() {
-        let secret: [u8; 32] = std::array::from_fn(|index| index as u8);
-        let nonce_bytes: [u8; 12] = std::array::from_fn(|index| index as u8);
-        let machine = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c01").unwrap();
-        let client = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c02").unwrap();
+    fn route_to_agent_carries_plaintext_payload() {
+        let machine_id = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c01").unwrap();
         let stream_id = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c03").unwrap();
-        let payload = ClientPayload::TerminalInput {
-            stream_id,
-            data: "AAMD_w".into(),
-        };
-        let plaintext = serde_json::to_vec(&payload).unwrap();
-        let cipher = ChaCha20Poly1305::new(&Key::from(secret));
-        let ciphertext = cipher
-            .encrypt(
-                &Nonce::from(nonce_bytes),
-                Payload {
-                    msg: &plaintext,
-                    aad: client_aad(machine, client).as_bytes(),
-                },
-            )
-            .unwrap();
+        let encoded = wire_to_text(&WireMessage::RouteToAgent {
+            machine_id,
+            payload: ClientPayload::TerminalRefresh { stream_id },
+        })
+        .unwrap();
 
         assert_eq!(
-            URL_SAFE_NO_PAD.encode(ciphertext),
-            "8tl8eVlyh3qV91qB9XRgAqUv24khAdmbyrVcsQelx1Gz6UjR3DyBqQ8LRr5Q8aJBTryZWcpL26s_geFjomL_5h9B2PyDIB-K9CVvkDoYvYW7_H0QLiu9elEg0nOpvdMVodn4UW4hba2Zi6T7"
+            encoded,
+            r#"{"type":"route_to_agent","machine_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c01","payload":{"type":"terminal_refresh","stream_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c03"}}"#
         );
+        // And a v1-shaped message with `sealed` must not parse anymore.
+        assert!(wire_from_text(
+            r#"{"type":"route_to_agent","machine_id":"01890f5e-b080-7cc0-98d2-a0f9d1f43c01","sealed":{"nonce":"AA","ciphertext":"AA"}}"#
+        )
+        .is_err());
     }
 }

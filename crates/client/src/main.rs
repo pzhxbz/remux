@@ -1,7 +1,5 @@
 use std::{
-    fs,
     io::{self, Write as _},
-    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -13,9 +11,8 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use remux_protocol::{
-    AgentPayload, ClientPayload, Command, CommandResult, MachineInfo, PROTOCOL_VERSION,
-    PairingBundle, SizePolicy, WireMessage, agent_aad, client_aad, decode_secret, open,
-    relay_connector, seal, terminal_bytes_to_text, terminal_text_to_bytes, wire_from_text,
+    AgentPayload, ClientPayload, Command, CommandResult, MachineInfo, PROTOCOL_VERSION, SizePolicy,
+    WireMessage, relay_connector, terminal_bytes_to_text, terminal_text_to_bytes, wire_from_text,
     wire_to_text,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -37,7 +34,7 @@ type SocketSource = SplitStream<Socket>;
     about = "RemoteMux reference CLI client"
 )]
 struct Cli {
-    /// Relay base URL. Pairing commands default to the URL in their bundle.
+    /// Relay base URL (wss://; ws:// only in debug builds).
     #[arg(long, global = true)]
     relay: Option<String>,
 
@@ -64,9 +61,9 @@ struct Cli {
 
 #[derive(Debug, Clone, ClapArgs)]
 struct Target {
-    /// Pairing TOML bundle exported by remux config.
+    /// Machine id or exact name, resolved against the relay's online machines.
     #[arg(long)]
-    pairing: PathBuf,
+    machine: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -74,7 +71,7 @@ enum ClientCommand {
     /// List machines currently connected to the relay.
     Machines,
 
-    /// List tmux sessions on one paired machine.
+    /// List tmux sessions on one online machine.
     Sessions(Target),
 
     /// List windows in a tmux session.
@@ -181,9 +178,7 @@ impl From<SizePolicyArg> for SizePolicy {
 }
 
 struct ClientConnection {
-    client_id: Uuid,
     machine_id: Uuid,
-    secret: [u8; 32],
     sink: SocketSink,
     source: SocketSource,
 }
@@ -215,15 +210,16 @@ async fn main() -> Result<()> {
             print_machines(&machines, cli.json)?;
         }
         command => {
-            let target = command_target(&command).expect("paired command");
-            let pairing = load_pairing(&target.pairing)?;
-            let relay = cli
-                .relay
-                .clone()
-                .unwrap_or_else(|| pairing.relay_url.clone());
-            let mut connection =
-                ClientConnection::connect(&relay, &token, client_id, &cli.client_name, pairing)
-                    .await?;
+            let target = command_target(&command).expect("machine-targeted command");
+            let relay = cli.relay.context("--relay is required")?;
+            let mut connection = ClientConnection::connect(
+                &relay,
+                &token,
+                client_id,
+                &cli.client_name,
+                &target.machine,
+            )
+            .await?;
 
             match command {
                 ClientCommand::Sessions(_) => {
@@ -359,30 +355,12 @@ impl ClientConnection {
         token: &str,
         client_id: Uuid,
         client_name: &str,
-        pairing: PairingBundle,
+        machine: &str,
     ) -> Result<Self> {
-        validate_relay_url(relay)?;
-        let endpoint = websocket_endpoint(relay, "ws/client");
-        let (socket, _) =
-            connect_async_tls_with_config(&endpoint, None, false, Some(relay_connector()))
-                .await
-                .with_context(|| format!("connect to relay {endpoint}"))?;
-        let (mut sink, mut source) = socket.split();
-        send_wire(
-            &mut sink,
-            WireMessage::ClientHello {
-                protocol: PROTOCOL_VERSION,
-                token: token.into(),
-                client_id,
-                client_name: client_name.into(),
-            },
-        )
-        .await?;
-        wait_ready(&mut sink, &mut source).await?;
+        let (sink, source, machines) = handshake(relay, token, client_id, client_name).await?;
+        let machine_id = resolve_machine(machine, &machines)?;
         Ok(Self {
-            client_id,
-            machine_id: pairing.machine_id,
-            secret: decode_secret(&pairing.machine_secret)?,
+            machine_id,
             sink,
             source,
         })
@@ -418,13 +396,11 @@ impl ClientConnection {
     }
 
     async fn send_payload(&mut self, payload: ClientPayload) -> Result<()> {
-        let aad = client_aad(self.machine_id, self.client_id);
-        let sealed = seal(&self.secret, aad.as_bytes(), &payload)?;
         send_wire(
             &mut self.sink,
             WireMessage::RouteToAgent {
                 machine_id: self.machine_id,
-                sealed,
+                payload,
             },
         )
         .await
@@ -441,11 +417,11 @@ impl ClientConnection {
                 continue;
             };
             match message {
-                WireMessage::DeliverToClient { machine_id, sealed }
-                    if machine_id == self.machine_id =>
-                {
-                    let aad = agent_aad(self.machine_id, self.client_id);
-                    return open(&self.secret, aad.as_bytes(), &sealed);
+                WireMessage::DeliverToClient {
+                    machine_id,
+                    payload,
+                } if machine_id == self.machine_id => {
+                    return Ok(payload);
                 }
                 WireMessage::MachineOffline { machine_id } if machine_id == self.machine_id => {
                     anyhow::bail!("machine {} went offline", self.machine_id)
@@ -514,10 +490,9 @@ impl ClientConnection {
                     let frame = frame.context("relay websocket closed")??;
                     let Some(message) = parse_ws_frame(frame)? else { continue };
                     match message {
-                        WireMessage::DeliverToClient { machine_id, sealed }
+                        WireMessage::DeliverToClient { machine_id, payload }
                             if machine_id == self.machine_id => {
-                                let aad = agent_aad(self.machine_id, self.client_id);
-                                match open::<AgentPayload>(&self.secret, aad.as_bytes(), &sealed)? {
+                                match payload {
                                     AgentPayload::TerminalOutput { stream_id: output_id, data }
                                         if output_id == stream_id => {
                                             stdout.write_all(&terminal_text_to_bytes(&data)?).await?;
@@ -612,6 +587,18 @@ async fn list_machines(
     client_id: Uuid,
     client_name: &str,
 ) -> Result<Vec<MachineInfo>> {
+    let (_, _, machines) = handshake(relay, token, client_id, client_name).await?;
+    Ok(machines)
+}
+
+/// Connect to the relay, complete the client hello, and return the socket plus
+/// the online machine list the relay sends right after `Ready`.
+async fn handshake(
+    relay: &str,
+    token: &str,
+    client_id: Uuid,
+    client_name: &str,
+) -> Result<(SocketSink, SocketSource, Vec<MachineInfo>)> {
     validate_relay_url(relay)?;
     let endpoint = websocket_endpoint(relay, "ws/client");
     let (socket, _) =
@@ -630,13 +617,16 @@ async fn list_machines(
     )
     .await?;
     tokio::time::timeout(Duration::from_secs(10), async {
+        let mut ready = false;
+        let mut snapshot = None;
         loop {
             let frame = source.next().await.context("relay websocket closed")??;
             let Some(message) = parse_ws_frame(frame)? else {
                 continue;
             };
             match message {
-                WireMessage::MachineSnapshot { machines } => return Ok(machines),
+                WireMessage::Ready { .. } => ready = true,
+                WireMessage::MachineSnapshot { machines } => snapshot = Some(machines),
                 WireMessage::Ping { nonce } => {
                     send_wire(&mut sink, WireMessage::Pong { nonce }).await?
                 }
@@ -645,31 +635,43 @@ async fn list_machines(
                 }
                 _ => {}
             }
-        }
-    })
-    .await
-    .context("machine snapshot timed out")?
-}
-
-async fn wait_ready(sink: &mut SocketSink, source: &mut SocketSource) -> Result<()> {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let frame = source.next().await.context("relay websocket closed")??;
-            let Some(message) = parse_ws_frame(frame)? else {
-                continue;
-            };
-            match message {
-                WireMessage::Ready { .. } => return Ok(()),
-                WireMessage::Ping { nonce } => send_wire(sink, WireMessage::Pong { nonce }).await?,
-                WireMessage::Error { code, message } => {
-                    anyhow::bail!("relay error {code}: {message}")
-                }
-                _ => {}
+            if ready && let Some(machines) = snapshot {
+                return Ok((sink, source, machines));
             }
         }
     })
     .await
     .context("relay handshake timed out")?
+}
+
+/// Resolve a `--machine` argument against the relay's online machine list:
+/// exact UUID first, then exact name.
+fn resolve_machine(selector: &str, machines: &[MachineInfo]) -> Result<Uuid> {
+    if let Ok(id) = Uuid::parse_str(selector)
+        && let Some(machine) = machines.iter().find(|m| m.id == id)
+    {
+        return Ok(machine.id);
+    }
+    let by_name: Vec<&MachineInfo> = machines.iter().filter(|m| m.name == selector).collect();
+    match by_name.as_slice() {
+        [machine] => Ok(machine.id),
+        [] => {
+            let online = machines
+                .iter()
+                .map(|m| format!("  {} ({})", m.name, m.id))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::bail!("machine {selector:?} is not online. Online machines:\n{online}")
+        }
+        many => {
+            let matches = many
+                .iter()
+                .map(|m| format!("  {} ({})", m.name, m.id))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::bail!("machine name {selector:?} is ambiguous; use the id:\n{matches}")
+        }
+    }
 }
 
 async fn send_wire(sink: &mut SocketSink, message: WireMessage) -> Result<()> {
@@ -686,19 +688,6 @@ fn parse_ws_frame(frame: Message) -> Result<Option<WireMessage>> {
         Message::Ping(_) | Message::Pong(_) => Ok(None),
         Message::Binary(_) | Message::Frame(_) => anyhow::bail!("unsupported websocket frame"),
     }
-}
-
-fn load_pairing(path: &Path) -> Result<PairingBundle> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("read pairing TOML bundle {}", path.display()))?;
-    let pairing: PairingBundle = toml::from_str(&text).context("decode pairing TOML bundle")?;
-    anyhow::ensure!(
-        pairing.version == PROTOCOL_VERSION,
-        "unsupported pairing bundle version"
-    );
-    let _ = decode_secret(&pairing.machine_secret)?;
-    validate_relay_url(&pairing.relay_url)?;
-    Ok(pairing)
 }
 
 fn print_machines(machines: &[MachineInfo], json: bool) -> Result<()> {
@@ -791,6 +780,12 @@ fn validate_relay_url(url: &str) -> Result<()> {
     anyhow::ensure!(
         url.starts_with("ws://") || url.starts_with("wss://"),
         "relay URL must start with ws:// or wss://"
+    );
+    // Payloads are plaintext over the wire (protocol v2), so release builds
+    // refuse unencrypted transport; ws:// is for development only.
+    anyhow::ensure!(
+        cfg!(debug_assertions) || url.starts_with("wss://"),
+        "release builds require a wss:// relay URL (plaintext ws:// is only available in debug builds)"
     );
     Ok(())
 }

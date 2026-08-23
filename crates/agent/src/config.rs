@@ -4,9 +4,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use remux_protocol::{PROTOCOL_VERSION, PairingBundle, encode_secret, generate_secret};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Version of the agent.toml schema. Deliberately decoupled from the wire
+/// PROTOCOL_VERSION so a protocol bump does not invalidate existing configs
+/// (which would force a new machine_id on reconfiguration).
+pub const AGENT_CONFIG_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
@@ -15,7 +19,6 @@ pub struct AgentConfig {
     pub relay_token: String,
     pub machine_id: Uuid,
     pub machine_name: String,
-    pub machine_secret: String,
     pub tmux_binary: String,
 }
 
@@ -27,12 +30,11 @@ impl AgentConfig {
         tmux_binary: String,
     ) -> Self {
         Self {
-            version: PROTOCOL_VERSION,
+            version: AGENT_CONFIG_VERSION,
             relay_url,
             relay_token,
             machine_id: Uuid::new_v4(),
             machine_name,
-            machine_secret: encode_secret(&generate_secret()),
             tmux_binary,
         }
     }
@@ -42,7 +44,7 @@ impl AgentConfig {
             .with_context(|| format!("read TOML config {}", path.display()))?;
         let config: Self = toml::from_str(&text).context("decode agent TOML config")?;
         anyhow::ensure!(
-            config.version == PROTOCOL_VERSION,
+            config.version == AGENT_CONFIG_VERSION,
             "unsupported agent config version"
         );
         Ok(config)
@@ -53,22 +55,6 @@ impl AgentConfig {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
         let text = toml::to_string_pretty(self).context("encode agent TOML config")?;
-        write_private(path, text.as_bytes())
-    }
-
-    pub fn pairing_bundle(&self) -> PairingBundle {
-        PairingBundle {
-            version: self.version,
-            relay_url: self.relay_url.clone(),
-            machine_id: self.machine_id,
-            machine_name: self.machine_name.clone(),
-            machine_secret: self.machine_secret.clone(),
-        }
-    }
-
-    pub fn save_pairing(&self, path: &Path) -> Result<()> {
-        let text =
-            toml::to_string_pretty(&self.pairing_bundle()).context("encode pairing TOML bundle")?;
         write_private(path, text.as_bytes())
     }
 }
@@ -132,16 +118,12 @@ pub fn default_config_path() -> PathBuf {
     PathBuf::from("agent.toml")
 }
 
-pub fn default_pairing_path(config_path: &Path) -> PathBuf {
-    config_path.with_file_name("pairing.toml")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn config_and_pairing_are_toml() {
+    fn config_is_toml() {
         let config = AgentConfig::new(
             "wss://relay.example.test".into(),
             "agent-token-0123456789".into(),
@@ -152,9 +134,24 @@ mod tests {
         let decoded: AgentConfig = toml::from_str(&encoded).unwrap();
         assert_eq!(decoded.machine_id, config.machine_id);
         assert_eq!(decoded.relay_url, config.relay_url);
+    }
 
-        let pairing = toml::to_string_pretty(&config.pairing_bundle()).unwrap();
-        let decoded_pairing: PairingBundle = toml::from_str(&pairing).unwrap();
-        assert_eq!(decoded_pairing.machine_secret, config.machine_secret);
+    #[test]
+    fn config_tolerates_leftover_machine_secret() {
+        // Configs written before protocol v2 carried a machine_secret field.
+        let text = r#"
+version = 1
+relay_url = "wss://relay.example.test"
+relay_token = "agent-token-0123456789"
+machine_id = "01890f5e-b080-7cc0-98d2-a0f9d1f43c01"
+machine_name = "linux-one"
+machine_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+tmux_binary = "/usr/bin/tmux"
+"#;
+        let decoded: AgentConfig = toml::from_str(text).unwrap();
+        assert_eq!(
+            decoded.machine_id,
+            Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c01").unwrap()
+        );
     }
 }
