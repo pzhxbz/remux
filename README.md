@@ -163,7 +163,7 @@ remux-client kill-session --pairing pairing.toml --session-id '$0' --confirm
 
 ## 本地构建
 
-要求：Rust 1.85+；Android 构建要求 JDK 17 和 Android SDK。
+要求：Rust 1.98+；Android 构建要求 JDK 17 和 Android SDK。
 
 Rust 开发构建与质量门禁：
 

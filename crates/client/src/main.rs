@@ -548,15 +548,15 @@ impl ClientConnection {
                     }
                 }
                 _ = resize_tick.tick() => {
-                    if let Ok(current_size) = size() {
-                        if current_size != last_size {
-                            last_size = current_size;
-                            self.send_payload(ClientPayload::TerminalResize {
-                                stream_id,
-                                cols: current_size.0,
-                                rows: current_size.1,
-                            }).await?;
-                        }
+                    if let Ok(current_size) = size()
+                        && current_size != last_size
+                    {
+                        last_size = current_size;
+                        self.send_payload(ClientPayload::TerminalResize {
+                            stream_id,
+                            cols: current_size.0,
+                            rows: current_size.1,
+                        }).await?;
                     }
                 }
                 _ = heartbeat.tick() => {
