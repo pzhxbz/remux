@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+run() {
+  printf '+ '
+  printf '%s ' "$@"
+  printf '\n'
+  "$@"
+}
+
+run cargo check
+run cargo clippy --all-targets -- -D warnings
+run cargo clippy --all-targets --all-features -- -D warnings
+run cargo test

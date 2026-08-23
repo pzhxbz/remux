@@ -10,12 +10,25 @@
 
 ## 提交前检查
 
-常规 Rust 改动至少运行：
+首次克隆仓库后启用受版本控制的 Git hooks：
+
+```bash
+scripts/setup-git-hooks.sh
+```
+
+该设置只写入当前仓库的本地 Git 配置，不修改全局配置。`pre-commit` 和 `pre-push` 都会强制依次执行：
+
+```bash
+cargo check
+cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```
+
+任意命令失败都会阻止 commit 或 push。不要使用 `--no-verify` 绕过 hooks。常规 Rust 改动还应运行格式和 diff 检查：
 
 ```bash
 cargo fmt --all -- --check
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
 git diff --check
 ```
 
