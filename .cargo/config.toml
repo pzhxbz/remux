@@ -1,0 +1,3 @@
+[alias]
+musl-x86_64 = "zigbuild --workspace --release --locked --target x86_64-unknown-linux-musl"
+musl-aarch64 = "zigbuild --workspace --release --locked --target aarch64-unknown-linux-musl"
