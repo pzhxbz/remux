@@ -190,11 +190,13 @@ scripts/build-musl.sh aarch64-unknown-linux-musl
 [GitHub Actions](.github/workflows/release.yml) 在 Pull Request、`main` push 和手动触发时自动执行：
 
 - Rust check、两组 clippy `-D warnings` 和全部测试；
-- Android unit test、lint、Debug APK 与 unsigned Release APK 构建；
+- Android unit test、lint、Debug APK 与 Release APK 构建；
 - x86_64/aarch64 Linux musl 静态 Agent、Client 和 Relay 构建；
 - Android APK 与 Linux 压缩包作为 Actions artifacts 上传。
 
-推送 `v*` tag 时会创建 GitHub Release，上传 APK、两种架构的静态压缩包与 `SHA256SUMS`。`remux-android-debug.apk` 使用调试签名，仅用于测试；`remux-android-release-unsigned.apk` 需要发布者自行签名后才能正式分发。
+推送 `v*` tag 时会创建 GitHub Release，上传 APK、两种架构的静态压缩包与 `SHA256SUMS`。`remux-android-debug.apk` 使用调试签名，仅用于测试；`remux-android-release.apk` 由仅在标签发布任务中可用的 GitHub Actions Secrets 自动签名并由 `apksigner` 验证。
+
+仓库管理员需要配置 `REMUX_ANDROID_KEYSTORE_BASE64`、`REMUX_ANDROID_KEYSTORE_PASSWORD`、`REMUX_ANDROID_KEY_ALIAS` 和 `REMUX_ANDROID_KEY_PASSWORD` 四个 Actions Secrets。签名 keystore 必须离线备份；丢失后将无法用同一身份更新已安装的 Android 应用。Actions 的手动触发参数 `release_tag` 可用于从现有标签重新构建并补全 Release 附件。
 
 ## 仓库结构
 

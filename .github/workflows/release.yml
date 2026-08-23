@@ -2,6 +2,11 @@ name: CI and distributable binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v* tag to build and publish (leave empty for CI only)
+        required: false
+        type: string
   pull_request:
   push:
     branches:
@@ -21,6 +26,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install stock tmux
         run: sudo apt-get update && sudo apt-get install --yes tmux
       - name: Install project Rust toolchain
@@ -39,6 +46,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install Java 17
         uses: actions/setup-java@v5
         with:
@@ -56,12 +65,79 @@ jobs:
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/remux-android-debug.apk
-          cp android/app/build/outputs/apk/release/app-release-unsigned.apk dist/remux-android-release-unsigned.apk
-      - name: Upload Android APKs
+      - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: remux-android
+          name: remux-android-debug
           path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  android-release:
+    name: Signed Android Release APK
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
+      - name: Install Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle.kts
+            android/gradle/wrapper/gradle-wrapper.properties
+            android/app/*.gradle.kts
+      - name: Assemble unsigned Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+      - name: Sign and verify Release APK
+        env:
+          REMUX_ANDROID_KEYSTORE_BASE64: ${{ secrets.REMUX_ANDROID_KEYSTORE_BASE64 }}
+          REMUX_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.REMUX_ANDROID_KEYSTORE_PASSWORD }}
+          REMUX_ANDROID_KEY_ALIAS: ${{ secrets.REMUX_ANDROID_KEY_ALIAS }}
+          REMUX_ANDROID_KEY_PASSWORD: ${{ secrets.REMUX_ANDROID_KEY_PASSWORD }}
+        run: |
+          required=(
+            REMUX_ANDROID_KEYSTORE_BASE64
+            REMUX_ANDROID_KEYSTORE_PASSWORD
+            REMUX_ANDROID_KEY_ALIAS
+            REMUX_ANDROID_KEY_PASSWORD
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+
+          signing_dir="$RUNNER_TEMP/remux-signing"
+          install -d -m 700 "$signing_dir" dist
+          printf '%s' "$REMUX_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/release.jks"
+          chmod 600 "$signing_dir/release.jks"
+
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [[ -z "$apksigner" ]]; then
+            echo "Android SDK apksigner was not found" >&2
+            exit 1
+          fi
+
+          "$apksigner" sign \
+            --ks "$signing_dir/release.jks" \
+            --ks-key-alias "$REMUX_ANDROID_KEY_ALIAS" \
+            --ks-pass env:REMUX_ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:REMUX_ANDROID_KEY_PASSWORD \
+            --out dist/remux-android-release.apk \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          "$apksigner" verify --verbose --print-certs dist/remux-android-release.apk
+      - name: Upload signed Android Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: remux-android-release
+          path: dist/remux-android-release.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -77,6 +153,8 @@ jobs:
           - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
       - name: Install Rust target
         run: |
           rustup toolchain install 1.85.0 --profile minimal
@@ -99,8 +177,8 @@ jobs:
           retention-days: 14
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [test, android, musl]
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release_tag != ''
+    needs: [test, android, android-release, musl]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -115,8 +193,13 @@ jobs:
       - name: Create GitHub Release and upload files
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
         run: |
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.apk dist/SHA256SUMS \
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a semantic v* tag; got: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.apk dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --clobber
