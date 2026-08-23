@@ -359,4 +359,33 @@ mod tests {
         let secret = generate_secret();
         assert_eq!(decode_secret(&encode_secret(&secret)).unwrap(), secret);
     }
+
+    #[test]
+    fn android_chacha20_poly1305_vector() {
+        let secret: [u8; 32] = std::array::from_fn(|index| index as u8);
+        let nonce_bytes: [u8; 12] = std::array::from_fn(|index| index as u8);
+        let machine = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c01").unwrap();
+        let client = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c02").unwrap();
+        let stream_id = Uuid::parse_str("01890f5e-b080-7cc0-98d2-a0f9d1f43c03").unwrap();
+        let payload = ClientPayload::TerminalInput {
+            stream_id,
+            data: "AAMD_w".into(),
+        };
+        let plaintext = serde_json::to_vec(&payload).unwrap();
+        let cipher = ChaCha20Poly1305::new(&Key::from(secret));
+        let ciphertext = cipher
+            .encrypt(
+                &Nonce::from(nonce_bytes),
+                Payload {
+                    msg: &plaintext,
+                    aad: client_aad(machine, client).as_bytes(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(ciphertext),
+            "8tl8eVlyh3qV91qB9XRgAqUv24khAdmbyrVcsQelx1Gz6UjR3DyBqQ8LRr5Q8aJBTryZWcpL26s_geFjomL_5h9B2PyDIB-K9CVvkDoYvYW7_H0QLiu9elEg0nOpvdMVodn4UW4hba2Zi6T7"
+        );
+    }
 }
