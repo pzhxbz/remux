@@ -1,8 +1,11 @@
-name: Build distributable binaries
+name: CI and distributable binaries
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -18,12 +21,15 @@ jobs:
         run: |
           rustup toolchain install 1.85.0 --profile minimal --component clippy
           rustup default 1.85.0
-      - name: Test and lint
+      - name: Cargo quality gate
         run: |
-          cargo test --workspace --locked
-          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo check
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test
 
   musl:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     needs: test
     runs-on: ubuntu-24.04
     strategy:
