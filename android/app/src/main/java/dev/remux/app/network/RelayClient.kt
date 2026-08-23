@@ -1,5 +1,7 @@
 package dev.remux.app.network
 
+import android.annotation.SuppressLint
+
 import dev.remux.app.data.RelayProfile
 import dev.remux.app.protocol.AgentPayload
 import dev.remux.app.protocol.ClientPayload
@@ -15,8 +17,12 @@ import dev.remux.app.protocol.SizePolicy
 import dev.remux.app.protocol.WireMessage
 import java.io.Closeable
 import java.io.IOException
+import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -510,11 +516,31 @@ class RelayClient(
     }
 
     companion object {
-        fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
-            .readTimeout(0, TimeUnit.MILLISECONDS)
-            .pingInterval(20, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
+        fun defaultHttpClient(): OkHttpClient {
+            // The relay serves an ephemeral self-signed certificate by default
+            // (mirroring the Rust agent/client, which also skip certificate
+            // validation). Session traffic is already sealed end-to-end with
+            // the pairing key, so TLS here only needs to encrypt, not
+            // authenticate, the relay.
+            val trustAll = object : X509TrustManager {
+                @SuppressLint("TrustAllX509TrustManager")
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+
+                @SuppressLint("TrustAllX509TrustManager")
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            }
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, arrayOf<TrustManager>(trustAll), null)
+            return OkHttpClient.Builder()
+                .sslSocketFactory(sslContext.socketFactory, trustAll)
+                .hostnameVerifier { _, _ -> true }
+                .readTimeout(0, TimeUnit.MILLISECONDS)
+                .pingInterval(20, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+        }
 
         private fun validateRelayUrl(url: String) {
             require(url.startsWith("ws://") || url.startsWith("wss://")) {
