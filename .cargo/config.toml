@@ -1,3 +1,13 @@
 [alias]
 musl-x86_64 = "zigbuild --workspace --release --locked --target x86_64-unknown-linux-musl"
 musl-aarch64 = "zigbuild --workspace --release --locked --target aarch64-unknown-linux-musl"
+
+# rustc ≥1.98 passes --fix-cortex-a53-843419 to the linker on aarch64-*-musl, and
+# zig's bundled ld.lld does not understand it. rust-lld (the LLVM lld shipped
+# with the toolchain) does. Zig still provides the musl sysroot / C toolchain
+# via cargo-zigbuild's cc wrapper; only the final link switches to rust-lld.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"

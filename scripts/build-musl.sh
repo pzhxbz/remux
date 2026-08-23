@@ -17,6 +17,20 @@ for target in "${targets[@]}"; do
   esac
 
   rustup target add "$target"
+
+  # rustc ≥1.98 passes --fix-cortex-a53-843419 to the linker on aarch64-*-musl,
+  # and the ld.lld bundled with zig rejects it. rust-lld (the LLVM lld shipped
+  # with the toolchain) accepts it. Force it for the final link; zig still
+  # provides the musl sysroot and C toolchain through cargo-zigbuild's cc shim.
+  case "$target" in
+    aarch64-unknown-linux-musl)
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+      ;;
+    x86_64-unknown-linux-musl)
+      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+      ;;
+  esac
+
   cargo zigbuild --workspace --release --locked --target "$target"
 
   stage="dist/remux-$target"
