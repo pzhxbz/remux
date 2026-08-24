@@ -409,4 +409,38 @@ mod tests {
                 |candidate| candidate.id == session.id && candidate.attached_clients == 0
             )));
     }
+
+    #[test]
+    fn take_control_resize_updates_tmux_layout() {
+        let Some(fixture) = IsolatedTmux::create() else {
+            eprintln!("tmux is unavailable; skipping integration assertion");
+            return;
+        };
+        let session = fixture.tmux.create_session("resize-layout", None).unwrap();
+        let window = fixture.tmux.list_windows(&session.id).unwrap().remove(0);
+        let (events, _receiver) = mpsc::channel(64);
+        let manager = TerminalManager::new(fixture.tmux.clone(), events);
+        let client_id = Uuid::new_v4();
+        let (stream_id, ignore_size) = manager
+            .open(client_id, &session.id, 80, 24, SizePolicy::TakeControl)
+            .unwrap();
+
+        assert!(!ignore_size);
+        assert!(wait_until(|| fixture
+            .tmux
+            .list_panes(&window.id)
+            .unwrap()
+            .iter()
+            .any(|pane| pane.width == 80 && pane.height == 23)));
+
+        manager.resize(client_id, stream_id, 112, 41).unwrap();
+        assert!(wait_until(|| fixture
+            .tmux
+            .list_panes(&window.id)
+            .unwrap()
+            .iter()
+            .any(|pane| pane.width == 112 && pane.height == 40)));
+
+        manager.detach(client_id, stream_id).unwrap();
+    }
 }

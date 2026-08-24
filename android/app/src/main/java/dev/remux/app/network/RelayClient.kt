@@ -99,8 +99,8 @@ class TerminalHandle internal constructor(
     }
 
     suspend fun resize(cols: Int, rows: Int) {
-        require(cols in 1..UShort.MAX_VALUE.toInt()) { "terminal cols are out of range" }
-        require(rows in 1..UShort.MAX_VALUE.toInt()) { "terminal rows are out of range" }
+        require(cols in 20..1000) { "terminal cols are out of range" }
+        require(rows in 5..500) { "terminal rows are out of range" }
         relayClient.resizeTerminal(machineId, streamId, cols.toUShort(), rows.toUShort())
     }
 
@@ -230,8 +230,8 @@ class RelayClient(
         rows: Int,
         sizePolicy: SizePolicy = SizePolicy.AUTO,
     ): TerminalHandle {
-        require(cols in 1..UShort.MAX_VALUE.toInt())
-        require(rows in 1..UShort.MAX_VALUE.toInt())
+        require(cols in 20..1000)
+        require(rows in 5..500)
         val result = request(
             machineId,
             Command.OpenTerminal(sessionId, cols.toUShort(), rows.toUShort(), sizePolicy),

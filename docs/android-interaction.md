@@ -56,6 +56,7 @@ Terminal UI 至少维护以下正交状态：
 
 - 单指上下拖动滚动 xterm.js 的本地 scrollback；
 - fling 有惯性，但速度上限要避免一次越过大量输出；
+- History 浮层提供向前/向后整页翻动和回到 Live，不要求用户只能反复短距离拖动；
 - 用户离开底部后进入 History 状态；
 - 新输出继续进入 buffer，不改变当前 viewport；
 - 右下角显示“回到实时”浮动按钮，并显示尚未查看的新增行数；
@@ -146,6 +147,7 @@ Home  End  PgUp  PgDn  Ins  Del
 - 长按：在 History 模式进入文本选择；Application pointer 模式先显示“选择/发送鼠标”选择条；
 - terminal 内容区默认不使用横滑切换 tab，以免与选择、鼠标和 TUI 操作冲突；tab 通过顶部 tab bar 切换；
 - 屏幕旋转或分屏变化在 fit 完成后发送一次稳定尺寸，避免 resize storm。
+- Android attach 使用当前 xterm 网格接管 client 尺寸；键盘、分屏、旋转和字体变化后把去重后的 cols/rows 发送给 PTY。
 - renderer 因旋转重建时，App 先 resize，再请求 Agent 对该 attach client 执行 `tmux refresh-client -t <tty>`；不向 pane 发送 `Ctrl-L`，也不修改 tmux 配置。
 - Terminal Workspace 不强制改变设备方向，默认按竖屏使用；无 IME 时使用单行紧凑 tab bar，IME 打开时暂时隐藏 tab/window/status 区，并把空间优先留给 xterm。
 

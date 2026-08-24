@@ -334,10 +334,10 @@ tmux session 同时被桌面和手机附着时，手机尺寸可能影响 tmux �
 
 采用以下客户端级策略：
 
-- 如果没有其他 client：正常 attach，手机 resize 会让 TUI 适配手机；
-- 如果已有其他 client：默认给远程 client 增加 `ignore-size` client flag，避免手机宽度缩小桌面会话；
-- App 明确显示“保持现有 tmux 尺寸”状态；
-- 用户可以主动切换为“以手机尺寸接管”，此操作只改变当前远程 client 行为，不写 tmux 配置；
+- 协议与 Rust Client 的 `auto` 策略在没有其他 client 时正常 attach；已有其他 client 时给远程 client 增加 `ignore-size` client flag，避免命令行客户端无意缩小桌面会话；
+- Android 是触摸交互客户端，attach 与 reattach 明确请求 `take_control`，以 xterm 实际 cols/rows 驱动 PTY；键盘、旋转、分屏和字体变化后自动发送去重的 resize；
+- `preserve_existing` 仍可供只读或不希望影响现有布局的客户端显式选择；
+- 所有策略都只改变当前远程 client 行为，不写 tmux option，也不修改用户配置；
 - 对不支持所需 client flag 的旧 tmux，默认拒绝在已有 client 时无提示附着，并让用户明确选择是否允许尺寸变化。
 
 目标最低版本暂定 tmux 3.2；Agent 启动时探测版本与能力，不依赖用户手工配置。
@@ -980,7 +980,7 @@ Phase 0、Phase 1 和 Android MVP 的核心链路已经完成；Phase 2 中的�
 13. Relay 数据库和日志中找不到 terminal 明文；
 14. 未配对 Client 即使拿到 Relay 登录也无法解密 terminal；
 15. 被撤销 Client 无法建立新 E2EE 会话；
-16. 已有桌面 tmux client 时，默认不会因远程附着而缩小其窗口；
+16. Rust Client 的 `auto` 不会无意缩小已有桌面 client，Android `take_control` 则按手机实际网格正确重排；
 17. `git diff` 和文件扫描确认代码不存在通用远程 exec API。
 
 ## 20. 需要评审确认的设计决策
@@ -989,7 +989,7 @@ Phase 0、Phase 1 和 Android MVP 的核心链路已经完成；Phase 2 中的�
 
 1. **Agent 权限模型**：坚持“一名 OS 用户一个 Agent”，不做 root 多用户代理；
 2. **tmux 行为**：创建、列出、重命名、附着、detach 和关闭 session 都是首期核心能力；
-3. **尺寸行为**：已有桌面 client 时默认 `ignore-size`，手机可主动接管；
+3. **尺寸行为**：Rust Client 默认 `auto`；Android 默认 `take_control` 并随实际 viewport 自动 resize；
 4. **Relay 隐私**：不保存 terminal 内容，不提供云端搜索或录屏；
 5. **配对模型**：每台机器通过一次性二维码授权手机；
 6. **客户端顺序**：先完成 Rust Client 全链路验证，再开始 Android；Android 最低版本暂定 Android 9 / API 28；

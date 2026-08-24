@@ -167,6 +167,10 @@ class TerminalView(context: Context) : FrameLayout(context) {
         JSONObject().put("type", "scroll_lines").put("lines", lines),
     )
 
+    fun scrollPages(pages: Int) = sendCommand(
+        JSONObject().put("type", "scroll_pages").put("pages", pages),
+    )
+
     fun setFontSize(value: Int) = sendCommand(
         JSONObject().put("type", "set_font_size").put("value", value.coerceIn(8, 28)),
     )

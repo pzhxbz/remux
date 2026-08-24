@@ -55,6 +55,8 @@ data class TerminalTabState(
     val modes: TerminalModes = TerminalModes(),
     val title: String? = null,
     val fontSize: Int = 12,
+    val cols: Int = DEFAULT_TERMINAL_COLS,
+    val rows: Int = DEFAULT_TERMINAL_ROWS,
     val applicationPointer: Boolean = false,
     val ctrl: ModifierMode = ModifierMode.OFF,
     val alt: ModifierMode = ModifierMode.OFF,
@@ -309,7 +311,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun attach(session: SessionInfo, sizePolicy: SizePolicy = SizePolicy.AUTO) {
+    fun attach(session: SessionInfo, sizePolicy: SizePolicy = SizePolicy.TAKE_CONTROL) {
         val current = mutableState.value
         val machineId = current.selectedMachineId ?: return
         current.terminalTabs.firstOrNull {
@@ -333,8 +335,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val handle = requireRelay().openTerminal(
                 machineId = machineId,
                 sessionId = session.id,
-                cols = 80,
-                rows = 24,
+                cols = DEFAULT_TERMINAL_COLS,
+                rows = DEFAULT_TERMINAL_ROWS,
                 sizePolicy = sizePolicy,
             )
             val tab = TerminalTabState(
@@ -391,11 +393,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun reattachTerminal(tabId: String, cols: Int = 80, rows: Int = 24) {
+    fun reattachTerminal(tabId: String) {
         val old = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
         launchOperation {
             runCatching { old.handle.detach() }
-            val handle = requireRelay().openTerminal(old.machineId, old.sessionId, cols, rows)
+            val handle = requireRelay().openTerminal(
+                machineId = old.machineId,
+                sessionId = old.sessionId,
+                cols = old.cols,
+                rows = old.rows,
+                sizePolicy = SizePolicy.TAKE_CONTROL,
+            )
             val replacement = old.copy(
                 handle = handle,
                 remoteStatus = TerminalStatus(),
@@ -504,11 +512,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resizeTerminal(tabId: String, cols: Int, rows: Int) {
         val tab = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
-        viewModelScope.launch { runCatching { tab.handle.resize(cols, rows) }.onFailure(::showError) }
+        if (!isValidTerminalSize(cols, rows)) return
+        if (tab.cols == cols && tab.rows == rows) return
+        updateTab(tabId) { it.copy(cols = cols, rows = rows) }
+        viewModelScope.launch {
+            runCatching { tab.handle.resize(cols, rows) }.onFailure(::showError)
+        }
     }
 
     fun terminalRendererReady(tabId: String, cols: Int, rows: Int) {
         val tab = mutableState.value.terminalTabs.firstOrNull { it.id == tabId } ?: return
+        if (!isValidTerminalSize(cols, rows)) {
+            terminalRendererError(tabId, "Terminal viewport is too small (${cols}x$rows)")
+            return
+        }
+        updateTab(tabId) { it.copy(cols = cols, rows = rows) }
         viewModelScope.launch {
             runCatching {
                 tab.handle.resize(cols, rows)
@@ -678,6 +696,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_TERMINAL_TABS = 6
     }
 }
+
+private const val DEFAULT_TERMINAL_COLS = 80
+private const val DEFAULT_TERMINAL_ROWS = 24
+private const val MIN_TERMINAL_COLS = 20
+private const val MAX_TERMINAL_COLS = 1000
+private const val MIN_TERMINAL_ROWS = 5
+private const val MAX_TERMINAL_ROWS = 500
+
+private fun isValidTerminalSize(cols: Int, rows: Int): Boolean =
+    cols in MIN_TERMINAL_COLS..MAX_TERMINAL_COLS &&
+        rows in MIN_TERMINAL_ROWS..MAX_TERMINAL_ROWS
 
 private fun String?.cleanOptional(): String? = this?.trim()?.takeIf(String::isNotEmpty)
 

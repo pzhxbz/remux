@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.AlertDialog
@@ -338,15 +339,13 @@ private fun TerminalPage(
                 modifier = Modifier.fillMaxSize(),
             )
             if (!tab.viewport.atBottom) {
-                FilledTonalButton(
-                    onClick = { terminalView?.scrollToBottom() },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, null)
-                    Text(
-                        if (tab.viewport.unread > 0) "Live · ${tab.viewport.unread} new" else "Back to live",
-                    )
-                }
+                HistoryControls(
+                    viewport = tab.viewport,
+                    onPageUp = { terminalView?.scrollPages(-1) },
+                    onPageDown = { terminalView?.scrollPages(1) },
+                    onLive = { terminalView?.scrollToBottom() },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                )
             }
             if (tab.remoteStatus.phase != TerminalPhase.OPEN || tab.rendererError != null) {
                 Surface(
@@ -432,6 +431,52 @@ private fun TerminalPage(
                 TextButton(onClick = { pendingPaste = null }) { Text("Cancel") }
             },
         )
+    }
+}
+
+@Composable
+private fun HistoryControls(
+    viewport: TerminalViewport,
+    onPageUp: () -> Unit,
+    onPageDown: () -> Unit,
+    onLive: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Surface(
+            modifier = modifier,
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xE6172229),
+            contentColor = Color(0xFFDCE7EE),
+            tonalElevation = 4.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = onPageUp,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, "One page older")
+                }
+                IconButton(
+                    onClick = onPageDown,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, "One page newer")
+                }
+                TextButton(
+                    onClick = onLive,
+                    modifier = Modifier.height(36.dp),
+                ) {
+                    Text(
+                        if (viewport.unread > 0) "Live · ${viewport.unread}" else "Live",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
     }
 }
 

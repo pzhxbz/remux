@@ -10,12 +10,12 @@
 - attach 内一键新建 window，并通过可横向滚动的 `index:name` 按钮快速切换；
 - 最多 6 个保活 terminal tab，返回机器页不会 detach，关闭 tab 只 detach；
 - xterm.js 6 本地资源、ANSI/truecolor/UTF-8/CJK/IME、20,000 行 scrollback；
-- 上滑历史、未读行提示、回到实时、TUI 应用手势切换和双指字体缩放；
+- 惯性滑动历史、整页前后翻动、未读行提示、回到实时、TUI 应用手势切换和双指字体缩放；
 - 点击 terminal 打开 App 自有键盘，精确发送 `Ctrl-D`/`Ctrl-C`、Ctrl/Alt、Esc/Tab、方向键和可配置 tmux prefix；
 - 固定 `中/EN` 键切换系统 CJK IME，`Fn` 扩展层提供 F1–F12、Home/End、PgUp/PgDn、Ins/Del；两种键盘不会同时显示；
 - bracketed paste；多行或超过 200 字符的粘贴先预览确认；
 - 竖屏优先的紧凑 terminal；键盘隐藏时不常驻快捷栏，输入时隐藏 window/status 区以保证 xterm 高度；
-- 屏幕旋转后通过 stock tmux `refresh-client` 恢复画面，不向 pane 注入按键；
+- attach 后按手机实际网格自动 resize，键盘/旋转变化后通过 stock tmux `refresh-client` 恢复画面，不向 pane 注入按键；
 - 一行 Quick Connect 配置，仍保留手动 Relay URL/token 设置作为后备；
 - TalkBack 时启用 xterm screen-reader mode；Debug 可用 `ws://`，Release 强制 `wss://`。
 

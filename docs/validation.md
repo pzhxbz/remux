@@ -71,6 +71,7 @@ Linux 的实际 PTY attach 验证了：
 - `Ctrl-b c` 原样进入 tmux 并新建窗口；
 - 第一条远程连接使用正常尺寸；
 - 已有 client 时第二条连接返回 `ignore-size=true`；
+- `take_control` attach 从 80×24 resize 到 112×41 后，Linux tmux pane 实际变为 112×40（扣除状态栏）；
 - 两个 Client 依次 detach 后 session 仍存在且 attached client 数回到 0。
 
 macOS attach 路径还验证了 `codex --version` 和 `claude --version` 的远程执行输出，分别识别到 Codex CLI 与 Claude Code。当前验证没有把真实账户对话写入测试记录。
@@ -83,7 +84,7 @@ macOS attach 路径还验证了 `codex --version` 和 `claude --version` 的远�
 - 从 App 创建 session，显示完整 tmux status、ANSI 和 UTF-8 输出；
 - 输入 `echo terminal-input-ok` 到 Linux PTY 并正确回显；
 - 运行 `sleep 30` 后点击独立 `^C`，pane 前台命令恢复为 shell；
-- 连续输出 80 行后上滑进入 History，新输出不抢视口并显示未读行数，点击按钮回到 Live；
+- 连续输出 80 行后上滑进入 History，新输出不抢视口并显示未读行数；支持惯性滑动、整页前后翻动和一键回到 Live；
 - 手动旋转后新的 WebView 通过 `terminal_refresh`/`tmux refresh-client` 自动恢复完整画面；最终交互保持设备方向，不再强制 attach 横屏；
 - 竖屏无键盘时使用 56dp 单行 terminal tab、紧凑 window 行和 12px 默认 terminal 字号；不再常驻额外快捷栏；
 - 点击 xterm 默认打开 App 自有 QWERTY terminal 键盘并隐藏 window/status 区，实测 tmux 保持 `46×30`；Paste 位于首屏高频行；

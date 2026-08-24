@@ -63,7 +63,8 @@ RemoteMux 已完成可端到端运行的 Rust 服务端/客户端、Linux Agent 
 
 - 机器搜索、在线筛选、收藏和最近使用；
 - session/window/pane 管理与最多 6 个保活 terminal tab；
-- xterm.js 本地资源、20,000 行 scrollback、历史/应用手势切换和字体缩放；
+- xterm.js 本地资源、20,000 行 scrollback、惯性/整页历史浏览、历史/应用手势切换和字体缩放；
+- attach 后以手机实际网格接管当前 tmux client，并随键盘、旋转和字体变化自动 resize；
 - App 自有 terminal 键盘，精确支持 Ctrl-D、Ctrl-C、Ctrl/Alt、tmux prefix 和 Paste；
 - `Fn` 层提供 F1–F12、Home/End、PgUp/PgDn、Ins/Del；
 - `中/EN` 与 Android 系统 IME 互斥切换，支持中文 composition；

@@ -60,11 +60,23 @@ let pointerMode = 'history';
 let resizeTimer = null;
 let wasAtBottom = true;
 let unreadSinceLeave = 0;
+let lastViewport = '';
 let lastModes = '';
+let lastReportedSize = '';
 let fontSize = 12;
 const pointers = new Map();
 let lastPinchDistance = null;
+let lastTwoFingerCenterY = null;
+let twoFingerStartDistance = null;
+let twoFingerStartCenterY = null;
+let twoFingerGesture = null;
+const twoFingerMovedPointers = new Set();
 let accumulatedScrollPixels = 0;
+let historyVelocity = 0;
+let historyGestureActive = false;
+let historyGestureMoved = false;
+let suppressNextClick = false;
+let inertiaFrame = null;
 
 function encodeBase64Url(bytes) {
   let binary = '';
@@ -87,7 +99,9 @@ function decodeBase64Url(value) {
 }
 
 function post(message) {
-  nativePort?.postMessage(JSON.stringify(message));
+  if (!nativePort) return false;
+  nativePort.postMessage(JSON.stringify(message));
+  return true;
 }
 
 function sendInput(bytes) {
@@ -106,12 +120,16 @@ function reportViewport() {
     unreadSinceLeave = 0;
   }
   wasAtBottom = atBottom;
-  post({
+  const viewport = {
     type: 'viewport',
     atBottom,
     distance: Math.max(0, buffer.baseY - buffer.viewportY),
     unread: atBottom ? 0 : unreadSinceLeave,
-  });
+  };
+  const serialized = JSON.stringify(viewport);
+  if (serialized !== lastViewport && post(viewport)) {
+    lastViewport = serialized;
+  }
 }
 
 function reportModes() {
@@ -122,15 +140,21 @@ function reportModes() {
     mouseTracking: terminal.modes.mouseTrackingMode,
   };
   const serialized = JSON.stringify(modes);
-  if (serialized !== lastModes) {
+  if (serialized !== lastModes && post(modes)) {
     lastModes = serialized;
-    post(modes);
+  }
+}
+
+function reportResize() {
+  const size = `${terminal.cols}x${terminal.rows}`;
+  if (size !== lastReportedSize && post({ type: 'resize', cols: terminal.cols, rows: terminal.rows })) {
+    lastReportedSize = size;
   }
 }
 
 function fitAndReport() {
   fitAddon.fit();
-  post({ type: 'resize', cols: terminal.cols, rows: terminal.rows });
+  reportResize();
 }
 
 function scheduleFit() {
@@ -143,10 +167,44 @@ function scrollHistoryByPixels(deltaPixels) {
   const cellHeight = Math.max(8, terminalElement.clientHeight / Math.max(1, terminal.rows));
   const lines = Math.trunc(accumulatedScrollPixels / cellHeight);
   if (lines !== 0) {
+    const before = terminal.buffer.active.viewportY;
     terminal.scrollLines(lines);
     accumulatedScrollPixels -= lines * cellHeight;
+    if (terminal.buffer.active.viewportY === before) {
+      accumulatedScrollPixels = 0;
+      return false;
+    }
     reportViewport();
   }
+  return true;
+}
+
+function cancelInertia() {
+  if (inertiaFrame !== null) {
+    cancelAnimationFrame(inertiaFrame);
+    inertiaFrame = null;
+  }
+}
+
+function startInertia(velocity) {
+  cancelInertia();
+  velocity = Math.max(-2.5, Math.min(2.5, velocity));
+  if (Math.abs(velocity) < 0.04) return;
+  let lastFrame = performance.now();
+  const tick = (now) => {
+    const elapsed = Math.min(32, Math.max(1, now - lastFrame));
+    lastFrame = now;
+    const canContinue = scrollHistoryByPixels(velocity * elapsed);
+    velocity *= Math.pow(0.94, elapsed / 16);
+    if (canContinue && Math.abs(velocity) >= 0.025) {
+      inertiaFrame = requestAnimationFrame(tick);
+    } else {
+      accumulatedScrollPixels = 0;
+      inertiaFrame = null;
+      reportViewport();
+    }
+  };
+  inertiaFrame = requestAnimationFrame(tick);
 }
 
 terminal.onData((data) => sendInput(encoder.encode(data)));
@@ -154,7 +212,7 @@ terminal.onBinary((data) => {
   const bytes = Uint8Array.from(data, (character) => character.charCodeAt(0) & 0xff);
   sendInput(bytes);
 });
-terminal.onResize(({ cols, rows }) => post({ type: 'resize', cols, rows }));
+terminal.onResize(reportResize);
 terminal.onScroll(reportViewport);
 terminal.onWriteParsed(() => {
   reportModes();
@@ -167,21 +225,42 @@ terminal.attachCustomWheelEventHandler((event) => {
     return true;
   }
   event.preventDefault();
+  cancelInertia();
   scrollHistoryByPixels(event.deltaY);
   return false;
 });
 
 terminalElement.addEventListener('pointerdown', (event) => {
-  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  cancelInertia();
+  pointers.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+    time: event.timeStamp,
+  });
   if (pointerMode === 'history' || pointers.size > 1) {
     terminalElement.setPointerCapture(event.pointerId);
+    historyGestureActive = true;
+  }
+  if (pointers.size === 1) {
+    historyVelocity = 0;
+    historyGestureMoved = false;
+  } else if (pointers.size === 2) {
+    const values = [...pointers.values()];
+    historyVelocity = 0;
+    lastPinchDistance = Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
+    lastTwoFingerCenterY = (values[0].y + values[1].y) / 2;
+    twoFingerStartDistance = lastPinchDistance;
+    twoFingerStartCenterY = lastTwoFingerCenterY;
+    twoFingerGesture = pointerMode === 'application' ? 'scroll' : null;
+    twoFingerMovedPointers.clear();
   }
 });
 
 terminalElement.addEventListener('pointermove', (event) => {
   const previous = pointers.get(event.pointerId);
   if (!previous) return;
-  pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  const current = { x: event.clientX, y: event.clientY, time: event.timeStamp };
+  pointers.set(event.pointerId, current);
 
   const localHistoryGesture = pointerMode === 'history' || pointers.size > 1;
   if (!localHistoryGesture) return;
@@ -190,29 +269,83 @@ terminalElement.addEventListener('pointermove', (event) => {
   if (pointers.size === 2) {
     const values = [...pointers.values()];
     const distance = Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
-    if (lastPinchDistance !== null && Math.abs(distance - lastPinchDistance) >= 6) {
-      const nextSize = Math.max(8, Math.min(28, fontSize + (distance > lastPinchDistance ? 1 : -1)));
-      if (nextSize !== fontSize) {
-        fontSize = nextSize;
-        terminal.options.fontSize = fontSize;
-        scheduleFit();
-        post({ type: 'font_size', value: fontSize });
+    const centerY = (values[0].y + values[1].y) / 2;
+    twoFingerMovedPointers.add(event.pointerId);
+    if (twoFingerGesture === null) {
+      const distanceDelta = distance - twoFingerStartDistance;
+      const centerDelta = centerY - twoFingerStartCenterY;
+      const enoughMovement = twoFingerMovedPointers.size === 2
+        ? Math.max(Math.abs(distanceDelta), Math.abs(centerDelta)) >= 8
+        : Math.max(Math.abs(distanceDelta), Math.abs(centerDelta)) >= 20;
+      if (enoughMovement) {
+        twoFingerGesture = Math.abs(distanceDelta) > Math.abs(centerDelta) * 1.4
+          ? 'pinch'
+          : 'scroll';
       }
     }
-    lastPinchDistance = distance;
+    if (twoFingerGesture === 'scroll') {
+      if (lastTwoFingerCenterY !== null) {
+        const delta = lastTwoFingerCenterY - centerY;
+        const elapsed = Math.max(1, event.timeStamp - previous.time);
+        const sampleVelocity = Math.max(-2.5, Math.min(2.5, delta / elapsed));
+        historyVelocity = historyVelocity * 0.65 + sampleVelocity * 0.35;
+        historyGestureMoved ||= Math.abs(delta) >= 1;
+        scrollHistoryByPixels(delta);
+      }
+      lastTwoFingerCenterY = centerY;
+    } else if (twoFingerGesture === 'pinch') {
+      if (lastPinchDistance !== null && Math.abs(distance - lastPinchDistance) >= 6) {
+        const nextSize = Math.max(8, Math.min(28, fontSize + (distance > lastPinchDistance ? 1 : -1)));
+        if (nextSize !== fontSize) {
+          fontSize = nextSize;
+          terminal.options.fontSize = fontSize;
+          scheduleFit();
+          post({ type: 'font_size', value: fontSize });
+        }
+        historyGestureMoved = true;
+      }
+      lastPinchDistance = distance;
+    }
   } else {
-    scrollHistoryByPixels(previous.y - event.clientY);
+    const delta = previous.y - event.clientY;
+    const elapsed = Math.max(1, event.timeStamp - previous.time);
+    const sampleVelocity = Math.max(-2.5, Math.min(2.5, delta / elapsed));
+    historyVelocity = historyVelocity * 0.65 + sampleVelocity * 0.35;
+    historyGestureMoved ||= Math.abs(delta) >= 1;
+    scrollHistoryByPixels(delta);
   }
 });
 
 function finishPointer(event) {
   pointers.delete(event.pointerId);
-  if (pointers.size < 2) lastPinchDistance = null;
+  if (pointers.size < 2) {
+    lastPinchDistance = null;
+    lastTwoFingerCenterY = null;
+    twoFingerStartDistance = null;
+    twoFingerStartCenterY = null;
+    twoFingerGesture = null;
+    twoFingerMovedPointers.clear();
+  }
+  if (pointers.size === 0 && historyGestureActive) {
+    if (historyGestureMoved) {
+      suppressNextClick = true;
+      setTimeout(() => { suppressNextClick = false; }, 300);
+      startInertia(historyVelocity);
+    }
+    historyGestureActive = false;
+  }
 }
 
 terminalElement.addEventListener('pointerup', finishPointer);
 terminalElement.addEventListener('pointercancel', finishPointer);
-terminalElement.addEventListener('click', () => post({ type: 'focus_request' }));
+terminalElement.addEventListener('click', (event) => {
+  if (suppressNextClick) {
+    suppressNextClick = false;
+    event.preventDefault();
+    return;
+  }
+  post({ type: 'focus_request' });
+});
 
 window.addEventListener('message', (event) => {
   if (event.data !== 'remux-init' || !event.ports || event.ports.length !== 1 || nativePort) {
@@ -248,11 +381,21 @@ window.addEventListener('message', (event) => {
         terminal.focus();
         break;
       case 'scroll_to_bottom':
+        cancelInertia();
+        accumulatedScrollPixels = 0;
         terminal.scrollToBottom();
         reportViewport();
         break;
       case 'scroll_lines':
+        cancelInertia();
+        accumulatedScrollPixels = 0;
         terminal.scrollLines(message.lines);
+        reportViewport();
+        break;
+      case 'scroll_pages':
+        cancelInertia();
+        accumulatedScrollPixels = 0;
+        terminal.scrollPages(message.pages);
         reportViewport();
         break;
       case 'set_font_size':
